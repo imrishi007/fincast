@@ -1,0 +1,1203 @@
+\documentclass[12pt, a4paper]{article}
+
+% ── Packages ────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% ── Listings Style ──────────────────────────────────────────────────────
+\definecolor{codebg}{HTML}{F5F5F5}
+\definecolor{codeframe}{HTML}{CCCCCC}
+\definecolor{codecomment}{HTML}{6A737D}
+\definecolor{codestring}{HTML}{032F62}
+\definecolor{codekeyword}{HTML}{D73A49}
+
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{codekeyword}\bfseries,
+    stringstyle=\color{codestring},
+    commentstyle=\color{codecomment}\itshape,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    numbersep=8pt,
+    breaklines=true,
+    showstringspaces=false,
+    tabsize=4,
+    captionpos=b,
+    aboveskip=10pt,
+    belowskip=10pt,
+}
+\lstset{style=pythonstyle}
+
+% ── Header / Footer ────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Financial Document Analysis}
+\lhead{Phase 3 \& 4 Documentation}
+\rfoot{Page \thepage}
+
+% ── Title Formatting ───────────────────────────────────────────────────
+\titleformat{\section}{\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{1em}{}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    citecolor=blue!60!black,
+    urlcolor=blue!60!black,
+}
+
+% ════════════════════════════════════════════════════════════════════════
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{2cm}
+{\Huge\bfseries Multimodal Financial Forecasting\\[0.4cm]
+\Large Data Preprocessing \& Model Architecture Report}\\[2cm]
+{\large Phase 3: Data Preprocessing \& Analysis\\
+Phase 4: Model Design \& Implementation}\\[2cm]
+{\large Financial Document Analysis Project}\\[1cm]
+\vfill
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ════════════════════════════════════════════════════════════════════════
+\section{Project Overview}
+% ════════════════════════════════════════════════════════════════════════
+
+This project implements a \textbf{multimodal financial forecasting system} that fuses five heterogeneous data sources---price time series, SEC 10-K filings, inter-company sector graphs, macroeconomic indicators, and earnings surprises---to predict \textbf{stock price direction} and \textbf{realized volatility} for 30 S\&P 500 technology stocks.
+
+The system evolved through 14 iterative phases, progressively integrating modalities and refining architectures.  This document covers the preprocessing pipeline (Phase~3) and the model design with training strategy (Phase~4).
+
+\subsection{Company Universe}
+
+The universe consists of 30 large-cap technology equities:
+
+\begin{center}
+\small
+\begin{tabular}{llllll}
+\toprule
+AAPL & MSFT & GOOGL & AMZN & META & NVDA \\
+TSLA & AMD  & INTC  & CRM  & ORCL & IBM  \\
+AVGO & TXN  & QCOM  & NFLX & ADBE & NOW  \\
+CSCO & HPE  & DELL  & PYPL & UBER & SNAP \\
+SNOW & DDOG & AMAT  & KLAC & LRCX & MRVL \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ════════════════════════════════════════════════════════════════════════
+\section{Data Sources \& Collection}
+% ════════════════════════════════════════════════════════════════════════
+
+\subsection{Price Data}
+\label{sec:price-data}
+
+Daily OHLCV (Open, High, Low, Close, Volume) data is sourced via \texttt{yfinance}.  Each ticker is stored as a separate CSV in \texttt{data/raw/prices/\{TICKER\}\_ohlcv.csv}.
+
+\begin{table}[H]
+\centering
+\caption{Price CSV schema}
+\begin{tabular}{ll}
+\toprule
+\textbf{Column} & \textbf{Description} \\
+\midrule
+\texttt{ticker}    & Stock symbol \\
+\texttt{date}      & Trading date (YYYY-MM-DD) \\
+\texttt{open}      & Opening price \\
+\texttt{high}      & Intraday high \\
+\texttt{low}       & Intraday low \\
+\texttt{close}     & Closing price \\
+\texttt{adj\_close} & Split/dividend-adjusted close \\
+\texttt{volume}    & Daily volume \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{File:} \texttt{configs/data\_collection.yaml}
+
+\begin{lstlisting}[caption={Data collection configuration (excerpt)}]
+scope:
+  start_date: "2016-01-01"
+  end_date:   "2026-01-01"
+
+companies:
+  tech_30:
+    - AAPL
+    - MSFT
+    - GOOGL
+    # ... (30 tickers total)
+
+sources:
+  prices:
+    provider: yahoo_finance
+    frequency: daily
+    fields: [open, high, low, close, adj_close, volume]
+\end{lstlisting}
+
+\subsection{SEC 10-K Filings}
+
+Annual 10-K filings are downloaded from the SEC EDGAR full-text search API and stored as plaintext files under \texttt{data/raw/sec\_filings/\{TICKER\}/}.  Five sections are extracted and concatenated:
+
+\begin{itemize}[nosep]
+    \item \textbf{Item 1} -- Business overview
+    \item \textbf{Item 1A} -- Risk factors
+    \item \textbf{Item 7} -- MD\&A (Management Discussion \& Analysis)
+    \item \textbf{Item 7A} -- Quantitative and qualitative disclosures
+    \item \textbf{Item 8} -- Financial statements
+\end{itemize}
+
+\subsection{Sector Graph}
+
+A hand-curated adjacency list encodes inter-company dependencies (supply-chain, competitive, and partnership relationships).  Stored in \texttt{data/raw/graph/sector\_graph.json}.
+
+\subsection{Macroeconomic Indicators}
+
+Twelve macro features are sourced from Yahoo Finance proxy tickers and FRED-equivalent series.  See Section~\ref{sec:macro-features} for the full list.
+
+\subsection{Earnings Surprises}
+
+EPS (Earnings Per Share) beat/miss data is collected per ticker per quarter and stored in \texttt{data/raw/earnings/}.  Each record contains the announced EPS, consensus estimate, and the computed surprise ratio.
+
+
+% ════════════════════════════════════════════════════════════════════════
+\section{Data Preprocessing Pipeline}
+% ════════════════════════════════════════════════════════════════════════
+
+\subsection{Time-Based Train / Validation / Test Split}
+\label{sec:splits}
+
+All splits are performed \emph{chronologically} to prevent future information leakage.
+
+\noindent\textbf{File:} \texttt{src/data/preprocessing.py}
+
+\begin{lstlisting}[caption={Time-based data splitting}]
+def time_based_split(df, train_ratio=0.7, val_ratio=0.15):
+    """Split DataFrame chronologically.
+    
+    Produces non-overlapping train / val / test sets
+    ordered by the 'date' column.
+    """
+    df = df.sort_values("date").reset_index(drop=True)
+    n = len(df)
+    train_end = int(n * train_ratio)
+    val_end   = int(n * (train_ratio + val_ratio))
+    
+    train_df = df.iloc[:train_end]
+    val_df   = df.iloc[train_end:val_end]
+    test_df  = df.iloc[val_end:]
+    
+    return train_df, val_df, test_df
+\end{lstlisting}
+
+\noindent\textbf{Default ratios:} 70\% train, 15\% validation, 15\% test.
+
+\textbf{Rationale.}  Temporal ordering ensures that validation and test performance reflect generalisation to genuinely future data---a critical requirement in financial applications where stationarity assumptions are frequently violated.
+
+\subsection{Feature Normalization}
+\label{sec:normalization}
+
+Z-score normalization is applied \emph{per feature} using statistics computed \emph{only on the training set}.
+
+\noindent\textbf{File:} \texttt{src/data/preprocessing.py}
+
+\begin{lstlisting}[caption={Z-score normalization}]
+def fit_scaler(train_df, feature_cols):
+    """Compute mean and std from training data only."""
+    means = train_df[feature_cols].mean()
+    stds  = train_df[feature_cols].std().replace(0, 1)
+    return means, stds
+
+class FeatureScaler:
+    """Applies z-score normalization using pre-fitted statistics."""
+    def __init__(self, means, stds):
+        self.means = means
+        self.stds  = stds
+    
+    def transform(self, df, feature_cols):
+        df[feature_cols] = (df[feature_cols] - self.means) / self.stds
+        return df
+\end{lstlisting}
+
+\textbf{Rationale.}  Using training-set statistics prevents data leakage from the validation/test distributions.  Replacing zero standard deviations with 1 avoids division-by-zero for constant features.
+
+
+\subsection{Price Feature Engineering}
+\label{sec:price-features}
+
+Starting from raw OHLCV data, 21 features are constructed.  The pipeline is implemented in \texttt{src/features/price\_features.py}.
+
+\noindent\textbf{File:} \texttt{src/features/price\_features.py}
+
+\begin{lstlisting}[caption={Price feature engineering (excerpt)}]
+def build_price_features(df):
+    """Engineer 21 features from OHLCV data."""
+    # --- Returns ---
+    df["log_return"]       = np.log(df["close"] / df["close"].shift(1))
+    df["intraday_return"]  = (df["close"] - df["open"]) / df["open"]
+    df["overnight_return"] = (df["open"] - df["close"].shift(1)) \
+                              / df["close"].shift(1)
+    
+    # --- Moving Averages ---
+    for w in [5, 10, 20]:
+        df[f"sma_{w}"]       = df["close"].rolling(w).mean()
+        df[f"sma_ratio_{w}"] = df["close"] / df[f"sma_{w}"]
+    
+    # --- Volatility Measures ---
+    df["parkinson_vol"] = np.sqrt(
+        (1 / (4 * np.log(2)))
+        * (np.log(df["high"] / df["low"])) ** 2
+    )
+    df["garman_klass_vol"] = np.sqrt(
+        0.5 * (np.log(df["high"] / df["low"])) ** 2
+        - (2 * np.log(2) - 1)
+        * (np.log(df["close"] / df["open"])) ** 2
+    )
+    
+    # --- HAR-RV Features (Heterogeneous Autoregressive) ---
+    df["rv_daily"]  = df["log_return"] ** 2
+    df["rv_weekly"] = df["rv_daily"].rolling(5).mean()
+    df["rv_monthly"]= df["rv_daily"].rolling(22).mean()
+    
+    # --- Volume Features ---
+    df["volume_sma_20"] = df["volume"].rolling(20).mean()
+    df["volume_ratio"]  = df["volume"] / df["volume_sma_20"]
+    
+    return df.dropna()
+\end{lstlisting}
+
+\begin{table}[H]
+\centering
+\caption{Complete list of 21 engineered price features}
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Category} & \textbf{Feature} & \textbf{Description} \\
+\midrule
+Returns & \texttt{log\_return} & $\ln(C_t / C_{t-1})$ \\
+        & \texttt{intraday\_return} & $(C_t - O_t) / O_t$ \\
+        & \texttt{overnight\_return} & $(O_t - C_{t-1}) / C_{t-1}$ \\
+\midrule
+Moving Avg. & \texttt{sma\_\{5,10,20\}} & Simple moving average \\
+            & \texttt{sma\_ratio\_\{5,10,20\}} & Close / SMA ratio \\
+\midrule
+Volatility & \texttt{parkinson\_vol} & Parkinson estimator \\
+           & \texttt{garman\_klass\_vol} & Garman-Klass estimator \\
+           & \texttt{rv\_daily} & Squared log return \\
+           & \texttt{rv\_weekly} & 5-day rolling mean of $r_t^2$ \\
+           & \texttt{rv\_monthly} & 22-day rolling mean of $r_t^2$ \\
+\midrule
+Volume & \texttt{volume\_sma\_20} & 20-day volume MA \\
+       & \texttt{volume\_ratio} & Volume / 20-day MA \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{Text Preprocessing (SEC Filings)}
+\label{sec:text-preprocessing}
+
+10-K filings are long documents (often exceeding 50,000 tokens).  Since FinBERT has a 512-token context limit, documents are chunked.
+
+\noindent\textbf{File:} \texttt{src/data/preprocessing.py}
+
+\begin{lstlisting}[caption={Text chunking for FinBERT}]
+def chunk_text(text, tokenizer, max_length=510,
+               stride=128):
+    """Split long text into overlapping 512-token chunks.
+    
+    Uses a sliding window with configurable stride to
+    preserve context across chunk boundaries.
+    """
+    tokens = tokenizer.encode(text, add_special_tokens=False)
+    chunks = []
+    for start in range(0, len(tokens), max_length - stride):
+        chunk = tokens[start : start + max_length]
+        chunks.append(
+            tokenizer.decode(chunk, skip_special_tokens=True)
+        )
+    return chunks
+\end{lstlisting}
+
+\textbf{Rationale.}  The overlapping stride (default 128 tokens) ensures that no information at chunk boundaries is lost.  Each chunk is independently processed by FinBERT; the resulting embeddings are aggregated via attention pooling in the Document Model (Section~\ref{sec:doc-model}).
+
+
+\subsection{Document Dataset Construction}
+\label{sec:doc-dataset}
+
+\noindent\textbf{File:} \texttt{src/data/document\_dataset.py}
+
+\begin{lstlisting}[caption={DocumentChunkDataset}]
+class DocumentChunkDataset(Dataset):
+    """Loads 10-K filing sections, chunks them,
+    and tokenizes for FinBERT."""
+    
+    SECTIONS = [
+        "item_1", "item_1a", "item_7",
+        "item_7a", "item_8"
+    ]
+    
+    def __init__(self, filings_dir, tokenizer,
+                 max_length=512):
+        self.samples = []
+        for ticker_dir in Path(filings_dir).iterdir():
+            for filing in ticker_dir.glob("*.txt"):
+                text = self._load_and_concat(filing)
+                chunks = chunk_text(text, tokenizer,
+                                    max_length - 2)
+                for chunk in chunks:
+                    enc = tokenizer(
+                        chunk, padding="max_length",
+                        truncation=True,
+                        max_length=max_length,
+                        return_tensors="pt"
+                    )
+                    self.samples.append(enc)
+\end{lstlisting}
+
+
+\subsection{Target Variable Generation}
+\label{sec:targets}
+
+Two prediction targets are constructed from raw price data.
+
+\noindent\textbf{File:} \texttt{src/data/target\_builder.py}
+
+\subsubsection{Direction Labels}
+
+Binary UP/DOWN labels based on forward returns over multiple horizons:
+
+\begin{lstlisting}[caption={Multi-horizon direction label generation}]
+def build_multi_horizon_direction_labels(price_df,
+        horizons=[5, 60]):
+    """Generate binary direction labels.
+    
+    For each horizon h:
+      forward_return = (close_{t+h} - close_t) / close_t
+      label = UP  if forward_return > 0
+              DOWN otherwise
+    """
+    for h in horizons:
+        col = f"direction_{h}d_return"
+        price_df[col] = (
+            price_df["close"].shift(-h) - price_df["close"]
+        ) / price_df["close"]
+        
+        price_df[f"direction_{h}d_label"] = np.where(
+            price_df[col] > 0, "UP", "DOWN"
+        )
+        price_df[f"direction_{h}d_id"] = np.where(
+            price_df[col] > 0, 1, 0
+        )
+    return price_df.dropna()
+\end{lstlisting}
+
+\textbf{Output CSV columns:} \texttt{ticker}, \texttt{date}, \texttt{close}, \texttt{direction\_5d\_return}, \texttt{direction\_5d\_id}, \texttt{direction\_5d\_label}, \texttt{direction\_60d\_return}, \texttt{direction\_60d\_id}, \texttt{direction\_60d\_label}.
+
+The primary prediction target for the fusion model is the \textbf{60-day direction}, chosen because longer horizons reduce noise and align with the fundamental information present in annual 10-K filings.
+
+\subsubsection{Volatility Targets}
+
+Realized volatility is computed as the annualized standard deviation of 20-day rolling log returns:
+
+\begin{lstlisting}[caption={Realized volatility target generation}]
+def build_realized_volatility_targets(price_df,
+        window=20):
+    """Calculate realized volatility.
+    
+    RV_t = std(log_returns_{t-w+1:t}) * sqrt(252)
+    """
+    price_df["log_return"] = np.log(
+        price_df["close"] / price_df["close"].shift(1)
+    )
+    price_df["realized_vol_20d"] = (
+        price_df["log_return"].rolling(window).std()
+    )
+    price_df["realized_vol_20d_annualized"] = (
+        price_df["realized_vol_20d"] * np.sqrt(252)
+    )
+    return price_df.dropna()
+\end{lstlisting}
+
+\textbf{Output CSV columns:} \texttt{ticker}, \texttt{date}, \texttt{close}, \texttt{log\_return}, \texttt{realized\_vol\_20d}, \texttt{realized\_vol\_20d\_annualized}.
+
+
+\subsection{Macroeconomic Feature Engineering}
+\label{sec:macro-features}
+
+\noindent\textbf{File:} \texttt{src/data/macro\_features.py}
+
+Twelve macroeconomic features are derived from market-wide indicators, all \textbf{lagged by 1 trading day} to prevent look-ahead bias.
+
+\begin{table}[H]
+\centering
+\caption{12 macroeconomic features}
+\small
+\begin{tabular}{clll}
+\toprule
+\textbf{\#} & \textbf{Feature} & \textbf{Source Proxy} & \textbf{Description} \\
+\midrule
+1  & VIX level          & \texttt{\^{}VIX}   & Implied volatility index \\
+2  & VIX change         & Derived            & $\Delta\text{VIX}_t$ \\
+3  & VIX term structure & \texttt{VIX3M}     & VIX3M $-$ VIX \\
+4  & 10Y Treasury yield & \texttt{\^{}TNX}   & 10-year note yield \\
+5  & 2Y Treasury yield  & \texttt{2YY=F}     & 2-year note yield \\
+6  & Yield curve slope  & Derived            & 10Y $-$ 2Y spread \\
+7  & USD index          & \texttt{DX-Y.NYB}  & US Dollar index \\
+8  & USD momentum       & Derived            & 20-day USD return \\
+9  & Fed funds proxy    & \texttt{\^{}IRX}   & 13-week T-bill rate \\
+10 & Credit spread      & \texttt{HYG/LQD}   & High-yield / IG ratio \\
+11 & Market breadth     & \texttt{RSP/SPY}    & Equal-weight / cap-weight \\
+12 & Momentum factor    & \texttt{MTUM}       & Momentum ETF return \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{lstlisting}[caption={Macro feature extraction (excerpt)}]
+class MacroFeatureBuilder:
+    PROXY_TICKERS = {
+        "vix": "^VIX", "tnx": "^TNX",
+        "usd": "DX-Y.NYB", "irx": "^IRX",
+        "hyg": "HYG", "lqd": "LQD",
+        "rsp": "RSP", "spy": "SPY", "mtum": "MTUM",
+    }
+    
+    def build(self, start, end):
+        raw = self._download(start, end)
+        features = pd.DataFrame(index=raw.index)
+        features["vix_level"]  = raw["vix"]
+        features["vix_change"] = raw["vix"].diff()
+        features["vix_term"]   = raw.get("vix3m",0) \
+                                  - raw["vix"]
+        features["tnx_10y"]    = raw["tnx"]
+        features["yield_2y"]   = raw.get("2y", 0)
+        features["yield_slope"]= features["tnx_10y"] \
+                                  - features["yield_2y"]
+        features["usd_index"]  = raw["usd"]
+        features["usd_mom"]    = raw["usd"].pct_change(20)
+        features["fed_proxy"]  = raw["irx"]
+        features["credit_spread"] = raw["hyg"]/raw["lqd"]
+        features["breadth"]    = raw["rsp"] / raw["spy"]
+        features["momentum"]   = raw["mtum"].pct_change(20)
+        # Lag by 1 day to prevent look-ahead bias
+        return features.shift(1).dropna()
+\end{lstlisting}
+
+Macro features are normalized with a dedicated \texttt{MacroFeatureScaler} using training-set statistics identical to the approach in Section~\ref{sec:normalization}.
+
+
+\subsection{Price Window Dataset}
+\label{sec:price-dataset}
+
+\noindent\textbf{File:} \texttt{src/data/price\_dataset.py}
+
+Sliding windows of length $W$ (default 60 trading days) are constructed over the normalized price feature matrix.  Each window is paired with its corresponding direction label and volatility target.
+
+\begin{lstlisting}[caption={Sliding window construction}]
+class PriceWindowDataset(Dataset):
+    def __init__(self, features_df, targets_df,
+                 window_size=60):
+        self.X = []  # (window_size, n_features) tensors
+        self.y_dir = []
+        self.y_vol = []
+        
+        for i in range(window_size, len(features_df)):
+            window = features_df.iloc[
+                i - window_size : i
+            ].values
+            self.X.append(torch.FloatTensor(window))
+            self.y_dir.append(
+                targets_df["direction_60d_id"].iloc[i]
+            )
+            self.y_vol.append(
+                targets_df["realized_vol_20d_annualized"
+                ].iloc[i]
+            )
+\end{lstlisting}
+
+
+\subsection{Embedding Extraction Pipeline}
+\label{sec:embeddings}
+
+After individual modality encoders are trained, a unified embedding extraction script produces aligned \texttt{.pt} files for the fusion model.
+
+\noindent\textbf{File:} \texttt{src/features/extract\_embeddings.py}
+
+\begin{lstlisting}[caption={Embedding extraction overview}]
+def extract_all_embeddings(config):
+    """Run each pre-trained encoder in inference mode
+    and save (ticker, date, embedding) tuples."""
+    
+    # 1. Price embeddings via CNN+BiLSTM
+    price_emb = extract_price_embeddings(
+        price_model, price_dataset)
+    
+    # 2. Document embeddings via FinBERT + attention
+    doc_emb = extract_document_embeddings(
+        doc_model, doc_dataset)
+    
+    # 3. Graph embeddings via GAT
+    gat_emb = extract_gat_embeddings(
+        gat_model, graph_data)
+    
+    # 4. Macro embeddings via MLP
+    macro_emb = extract_macro_embeddings(
+        macro_model, macro_features)
+    
+    # Align by (ticker, date) and save
+    aligned = align_embeddings(
+        price_emb, doc_emb, gat_emb, macro_emb)
+    torch.save(aligned, "data/embeddings/fusion.pt")
+\end{lstlisting}
+
+
+\subsection{Fundamental Surprise Targets}
+
+\noindent\textbf{File:} \texttt{src/data/target\_builder.py}
+
+Earnings surprises are aligned with trading dates and encoded as conditioning features for the gated fusion mechanism:
+
+\begin{lstlisting}[caption={Earnings surprise alignment}]
+def build_fundamental_surprise_targets(
+        earnings_df, price_dates):
+    """Align quarterly EPS surprises with daily dates.
+
+    surprise = (actual_eps - est_eps) / |est_eps|
+    Forward-fill between announcement dates.
+    """
+    earnings_df["surprise_ratio"] = (
+        (earnings_df["actual"] - earnings_df["estimate"])
+        / earnings_df["estimate"].abs().clip(lower=1e-6)
+    )
+    return earnings_df.set_index("date") \
+        .reindex(price_dates).ffill()
+\end{lstlisting}
+
+
+% ════════════════════════════════════════════════════════════════════════
+\section{Model Architectures}
+% ════════════════════════════════════════════════════════════════════════
+
+The system employs a \textbf{modular encoder--fusion architecture}: four specialized encoders produce fixed-dimensional embeddings, which are combined by a gated fusion module.
+
+\begin{figure}[H]
+\centering
+\fbox{\parbox{0.9\textwidth}{
+\centering
+\textbf{Architecture Overview}\\[6pt]
+\begin{tabular}{ccccc}
+Price & Document & Graph & Macro & Surprise \\
+$\downarrow$ & $\downarrow$ & $\downarrow$ & $\downarrow$ & $\downarrow$ \\
+CNN+BiLSTM & FinBERT+Attn & GAT & MLP & \\
+$\downarrow$ & $\downarrow$ & $\downarrow$ & $\downarrow$ & \\
+$\mathbf{e}_{\text{price}}$ & $\mathbf{e}_{\text{doc}}$ & $\mathbf{e}_{\text{gat}}$ & $\mathbf{e}_{\text{macro}}$ & \\
+\end{tabular}\\[6pt]
+$\oplus$ \textbf{Gated Attention Fusion} \\[4pt]
+$\downarrow$ \\[2pt]
+Direction Head $\quad|\quad$ Volatility Head
+}}
+\end{figure}
+
+
+\subsection{Price Encoder: CNN + BiLSTM}
+\label{sec:price-model}
+
+\noindent\textbf{File:} \texttt{src/models/price\_model.py}
+
+\begin{lstlisting}[caption={Price direction model}]
+class PriceDirectionModel(nn.Module):
+    def __init__(self, n_features, hidden=128,
+                 n_filters=64, kernel=3, dropout=0.3):
+        super().__init__()
+        # Temporal feature extraction
+        self.conv1d = nn.Conv1d(
+            n_features, n_filters, kernel,
+            padding=kernel // 2
+        )
+        self.bn     = nn.BatchNorm1d(n_filters)
+        
+        # Sequence modeling
+        self.lstm = nn.LSTM(
+            n_filters, hidden, num_layers=2,
+            batch_first=True, bidirectional=True,
+            dropout=dropout
+        )
+        
+        # Classification head
+        self.fc = nn.Linear(hidden * 2, 1)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x):
+        # x: (batch, seq_len, n_features)
+        x = x.transpose(1, 2)            # (B, F, T)
+        x = F.relu(self.bn(self.conv1d(x)))
+        x = x.transpose(1, 2)            # (B, T, C)
+        out, _ = self.lstm(x)
+        x = self.dropout(out[:, -1, :])   # Last step
+        return self.fc(x)
+\end{lstlisting}
+
+\textbf{Design rationale:}
+\begin{itemize}[nosep]
+    \item The \textbf{1D convolution} captures local temporal patterns (e.g., candlestick formations, short-term momentum).
+    \item The \textbf{bidirectional LSTM} models longer-range sequential dependencies.
+    \item Batch normalization and dropout mitigate overfitting on noisy financial data.
+\end{itemize}
+
+
+\subsection{Document Encoder: FinBERT + Attention Pooling}
+\label{sec:doc-model}
+
+\noindent\textbf{File:} \texttt{src/models/document\_model.py}
+
+\begin{lstlisting}[caption={Document direction model}]
+class DocumentDirectionModel(nn.Module):
+    def __init__(self, backbone="ProsusAI/finbert",
+                 hidden=256, dropout=0.3):
+        super().__init__()
+        self.encoder = AutoModel.from_pretrained(backbone)
+        bert_dim = self.encoder.config.hidden_size  # 768
+        
+        # Attention pooling over [CLS] + token outputs
+        self.attention = nn.Sequential(
+            nn.Linear(bert_dim, hidden),
+            nn.Tanh(),
+            nn.Linear(hidden, 1)
+        )
+        self.fc = nn.Linear(bert_dim, 1)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, input_ids, attention_mask):
+        out = self.encoder(
+            input_ids, attention_mask
+        ).last_hidden_state           # (B, T, 768)
+        
+        # Attention-weighted pooling
+        attn_weights = self.attention(out)
+        attn_weights = F.softmax(
+            attn_weights, dim=1)      # (B, T, 1)
+        pooled = (out * attn_weights).sum(dim=1)
+        
+        return self.fc(self.dropout(pooled))
+\end{lstlisting}
+
+\textbf{Design rationale:}
+\begin{itemize}[nosep]
+    \item \textbf{FinBERT} (ProsusAI/finbert) is pre-trained on financial text, providing domain-specific contextual embeddings.
+    \item \textbf{Attention pooling} learns to weight the most informative tokens (e.g., risk disclosures, revenue commentary) rather than relying solely on the \texttt{[CLS]} token.
+\end{itemize}
+
+
+\subsection{Graph Encoder: Graph Attention Network (GAT)}
+\label{sec:gat-model}
+
+\noindent\textbf{File:} \texttt{src/models/gat\_model.py}
+
+\begin{lstlisting}[caption={Custom GAT layer}]
+class GATLayer(nn.Module):
+    def __init__(self, in_dim, out_dim, n_heads=4,
+                 dropout=0.3, concat=True):
+        super().__init__()
+        self.n_heads  = n_heads
+        self.head_dim = out_dim // n_heads
+        
+        self.W = nn.Linear(in_dim,
+                           n_heads * self.head_dim)
+        self.a = nn.Parameter(
+            torch.zeros(n_heads, 2 * self.head_dim))
+        nn.init.xavier_uniform_(self.a.unsqueeze(0))
+        
+        self.leaky_relu = nn.LeakyReLU(0.2)
+        self.dropout    = nn.Dropout(dropout)
+    
+    def forward(self, h, adj):
+        # h: (N, in_dim), adj: (N, N)
+        Wh = self.W(h).view(-1, self.n_heads,
+                             self.head_dim)
+        # Compute attention coefficients
+        e = self._attention(Wh)        # (N, N, heads)
+        e = e.masked_fill(
+            adj.unsqueeze(-1) == 0, float("-inf"))
+        alpha = F.softmax(e, dim=1)
+        alpha = self.dropout(alpha)
+        
+        # Aggregate neighbor features
+        out = torch.bmm(
+            alpha.permute(2,0,1),
+            Wh.permute(1,0,2)
+        ).permute(1,0,2)               # (N, heads, d)
+        return out.reshape(-1,
+            self.n_heads * self.head_dim)
+\end{lstlisting}
+
+The full \texttt{GraphEnhancedModel} stacks two GAT layers with ELU activations:
+
+\begin{lstlisting}[caption={Graph-enhanced model}]
+class GraphEnhancedModel(nn.Module):
+    def __init__(self, price_dim, gat_hidden=64,
+                 gat_out=32, n_heads=4):
+        super().__init__()
+        self.gat1 = GATLayer(price_dim, gat_hidden,
+                             n_heads)
+        self.gat2 = GATLayer(gat_hidden, gat_out,
+                             n_heads)
+        self.fc   = nn.Linear(gat_out, 1)
+    
+    def forward(self, node_features, adj):
+        x = F.elu(self.gat1(node_features, adj))
+        x = self.gat2(x, adj)
+        return self.fc(x)
+\end{lstlisting}
+
+\textbf{Design rationale:}  The GAT propagates information across the sector graph, allowing correlated companies (e.g., NVDA and AMD, or AAPL and its supply chain) to inform each other's predictions through learned attention-weighted message passing.
+
+
+\subsection{Macro Encoder: MLP}
+\label{sec:macro-model}
+
+\noindent\textbf{File:} \texttt{src/models/macro\_model.py}
+
+\begin{lstlisting}[caption={Macro state encoder}]
+class MacroStateModel(nn.Module):
+    """3-layer MLP: 12 -> 64 -> 64 -> 32."""
+    def __init__(self, input_dim=12, hidden=64,
+                 output_dim=32, dropout=0.3):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden),
+            nn.ReLU(),
+            nn.BatchNorm1d(hidden),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.BatchNorm1d(hidden),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, output_dim),
+        )
+    
+    def forward(self, x):
+        return self.net(x)
+\end{lstlisting}
+
+\textbf{Design rationale:}  The macro feature vector is low-dimensional (12 features) and does not require sequential or graph-based modeling.  A compact MLP with batch normalization suffices to project it into the shared embedding space.
+
+
+\subsection{Multimodal Fusion Model}
+\label{sec:fusion-model}
+
+\noindent\textbf{File:} \texttt{src/models/fusion\_model.py}
+
+The fusion model evolved across project phases.  The core architecture (V2) fuses four modality embeddings via \textbf{gated attention}, conditioned on earnings surprise features.
+
+\begin{lstlisting}[caption={Multimodal fusion with gated attention (V2)}]
+class MultimodalFusionModel(nn.Module):
+    def __init__(self, price_dim=256, gat_dim=32,
+                 doc_dim=768, macro_dim=32,
+                 surprise_dim=4, fusion_hidden=256,
+                 dropout=0.3):
+        super().__init__()
+        total_dim = price_dim+gat_dim+doc_dim+macro_dim
+        
+        # Projection layers per modality
+        self.proj_price = nn.Linear(price_dim,
+                                     fusion_hidden)
+        self.proj_gat   = nn.Linear(gat_dim,
+                                     fusion_hidden)
+        self.proj_doc   = nn.Linear(doc_dim,
+                                     fusion_hidden)
+        self.proj_macro = nn.Linear(macro_dim,
+                                     fusion_hidden)
+        
+        # Gating network (conditioned on surprise)
+        gate_input = 4 * fusion_hidden + surprise_dim
+        self.gate = nn.Sequential(
+            nn.Linear(gate_input, fusion_hidden),
+            nn.ReLU(),
+            nn.Linear(fusion_hidden, 4),
+            nn.Softmax(dim=-1),
+        )
+        
+        # Prediction heads
+        self.direction_head = nn.Sequential(
+            nn.Linear(fusion_hidden, 128),
+            nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(128, 1),
+        )
+        self.volatility_head = nn.Sequential(
+            nn.Linear(fusion_hidden, 128),
+            nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(128, 1),
+            nn.Softplus(),  # ensure positive output
+        )
+\end{lstlisting}
+
+\begin{lstlisting}[caption={Fusion forward pass}]
+    def forward(self, price_emb, gat_emb, doc_emb,
+                macro_emb, surprise_feat):
+        # Project each modality
+        p = self.proj_price(price_emb)
+        g = self.proj_gat(gat_emb)
+        d = self.proj_doc(doc_emb)
+        m = self.proj_macro(macro_emb)
+        
+        # Stack: (B, 4, fusion_hidden)
+        stacked = torch.stack([p, g, d, m], dim=1)
+        
+        # Compute gating weights
+        concat = torch.cat([p, g, d, m,
+                            surprise_feat], dim=-1)
+        weights = self.gate(concat)   # (B, 4)
+        weights = weights.unsqueeze(-1)  # (B, 4, 1)
+        
+        # Weighted sum
+        fused = (stacked * weights).sum(dim=1)
+        
+        dir_out = self.direction_head(fused)
+        vol_out = self.volatility_head(fused)
+        return dir_out, vol_out
+\end{lstlisting}
+
+\textbf{Design rationale:}
+\begin{itemize}[nosep]
+    \item \textbf{Gated attention} dynamically weights modalities depending on the current market regime and earnings context, rather than using fixed or equal weighting.
+    \item \textbf{Surprise conditioning} allows the gate to up-weight fundamental modalities after earnings announcements.
+    \item \textbf{Softplus activation} on the volatility head ensures non-negative predictions.
+\end{itemize}
+
+\subsubsection{Phase 12: Volatility-Primary Fusion}
+
+Phase 12 pivoted the architecture to prioritize volatility prediction:
+
+\begin{lstlisting}[caption={Phase 12 fusion model additions}]
+class Phase12FusionModel(MultimodalFusionModel):
+    """Volatility-primary with MC Dropout."""
+    def __init__(self, *args, mc_samples=10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mc_samples = mc_samples
+    
+    def predict_with_uncertainty(self, *inputs):
+        """MC Dropout for epistemic uncertainty."""
+        self.train()  # keep dropout active
+        preds = [self(*inputs) for _ in
+                 range(self.mc_samples)]
+        self.eval()
+        vol_preds = torch.stack(
+            [p[1] for p in preds])
+        return vol_preds.mean(0), vol_preds.std(0)
+\end{lstlisting}
+
+\subsubsection{Phase 14: HAR-RV Skip Connection}
+
+Phase 14 added a direct skip connection from HAR-RV features to the volatility head, bypassing the CNN-BiLSTM encoder:
+
+\begin{lstlisting}[caption={Phase 14 HAR-RV skip path}]
+class Phase14FusionModel(Phase12FusionModel):
+    """Adds HAR-RV autoregressive skip connection."""
+    def __init__(self, *args, har_dim=3, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.har_proj = nn.Linear(har_dim, 64)
+        # Override vol head to accept fused + HAR
+        self.volatility_head = nn.Sequential(
+            nn.Linear(256 + 64, 128),
+            nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(128, 1),
+            nn.Softplus(),
+        )
+    
+    def forward(self, *args, har_rv=None):
+        dir_out, _ = super().forward(*args)
+        fused = self._get_fused(*args)
+        har_feat = F.relu(self.har_proj(har_rv))
+        vol_in = torch.cat([fused, har_feat], dim=-1)
+        vol_out = self.volatility_head(vol_in)
+        return dir_out, vol_out
+\end{lstlisting}
+
+\textbf{Rationale:}  The HAR-RV (Heterogeneous Autoregressive Realized Volatility) model is a well-established baseline in volatility forecasting.  The skip connection provides a ``highway'' for autoregressive information that might be attenuated by the deep encoder.
+
+
+% ════════════════════════════════════════════════════════════════════════
+\section{Loss Functions}
+% ════════════════════════════════════════════════════════════════════════
+
+\noindent\textbf{File:} \texttt{src/models/losses.py}
+
+\subsection{ListNet Ranking Loss (Direction)}
+
+Rather than treating direction prediction as binary classification, we use a \textbf{ranking loss} that optimizes the ranking of stocks by predicted return:
+
+\begin{lstlisting}[caption={ListNet ranking loss}]
+class ListNetRankingLoss(nn.Module):
+    def __init__(self, temperature=1.0):
+        super().__init__()
+        self.temperature = temperature
+    
+    def forward(self, scores, targets):
+        """
+        scores:  predicted returns (B,)
+        targets: actual forward returns (B,)
+        """
+        p_true = F.softmax(
+            targets / self.temperature, dim=0)
+        p_pred = F.softmax(
+            scores / self.temperature, dim=0)
+        
+        # Cross-entropy between distributions
+        loss = -(p_true * torch.log(
+            p_pred + 1e-10)).sum()
+        return loss
+\end{lstlisting}
+
+\textbf{Rationale:}  In a portfolio context, the \emph{relative ranking} of stocks matters more than the absolute probability of direction.  ListNet loss directly optimizes this ranking quality.
+
+
+\subsection{QLIKE Loss (Volatility)}
+
+The QLIKE loss is the quasi-likelihood loss from the volatility forecasting literature:
+
+\begin{equation}
+\mathcal{L}_{\text{QLIKE}} = \frac{1}{N}\sum_{i=1}^{N}\left(\frac{\sigma_i^2}{\hat{\sigma}_i^2} - \ln\frac{\sigma_i^2}{\hat{\sigma}_i^2} - 1\right)
+\end{equation}
+
+\begin{lstlisting}[caption={QLIKE loss}]
+class QLIKELoss(nn.Module):
+    def __init__(self, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+    
+    def forward(self, pred, target):
+        pred   = pred.clamp(min=self.eps)
+        target = target.clamp(min=self.eps)
+        ratio  = target / pred
+        loss   = (ratio - torch.log(ratio) - 1).mean()
+        return loss
+\end{lstlisting}
+
+\textbf{Rationale:}  QLIKE penalizes under-prediction more heavily than MSE, which is appropriate for risk management applications where underestimating volatility is dangerous.
+
+
+\subsection{Combined Multi-Task Loss}
+
+Direction and volatility losses are combined with configurable weights:
+
+\begin{lstlisting}[caption={Combined loss}]
+class CombinedVolatilityLoss(nn.Module):
+    def __init__(self, vol_weight=0.7, dir_weight=0.3):
+        super().__init__()
+        self.vol_loss = QLIKELoss()
+        self.dir_loss = ListNetRankingLoss()
+        self.vol_weight = vol_weight
+        self.dir_weight = dir_weight
+    
+    def forward(self, dir_pred, dir_target,
+                vol_pred, vol_target):
+        l_vol = self.vol_loss(vol_pred, vol_target)
+        l_dir = self.dir_loss(dir_pred, dir_target)
+        return (self.vol_weight * l_vol
+                + self.dir_weight * l_dir)
+\end{lstlisting}
+
+
+% ════════════════════════════════════════════════════════════════════════
+\section{Training Configuration}
+% ════════════════════════════════════════════════════════════════════════
+
+\noindent\textbf{File:} \texttt{configs/experiment.yaml}
+
+\subsection{Optimizer}
+
+\begin{lstlisting}[caption={Experiment configuration (excerpt)}]
+training:
+  optimizer: AdamW
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  batch_size: 64
+  max_epochs: 100
+  patience: 15           # early stopping
+  gradient_clip: 1.0
+  use_amp: true           # mixed precision
+
+model:
+  price_encoder:
+    n_filters: 64
+    hidden_dim: 128
+    n_layers: 2
+    dropout: 0.3
+  document_backbone: "ProsusAI/finbert"
+  gat_heads: 4
+  fusion_hidden: 256
+
+loss:
+  direction: listnet
+  volatility: qlike      # or mse
+  vol_weight: 0.7
+  dir_weight: 0.3
+\end{lstlisting}
+
+\textbf{AdamW} is chosen over Adam because its decoupled weight decay provides better regularization for transformer-based models (FinBERT) and prevents the effective learning rate from being scaled by the adaptive moment estimates.
+
+
+\subsection{Training Utilities}
+
+\noindent\textbf{File:} \texttt{src/train/common.py}
+
+\begin{lstlisting}[caption={Training infrastructure}]
+class TrainingConfig:
+    lr: float = 3e-4
+    weight_decay: float = 0.01
+    batch_size: int = 64
+    epochs: int = 100
+    patience: int = 15
+    grad_clip: float = 1.0
+    use_amp: bool = True
+
+def create_optimizer(model, config):
+    return torch.optim.AdamW(
+        model.parameters(),
+        lr=config.lr,
+        weight_decay=config.weight_decay,
+    )
+
+class EarlyStopping:
+    """Stop training when val loss stops improving."""
+    def __init__(self, patience=15, min_delta=1e-4):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = float("inf")
+    
+    def step(self, val_loss):
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+            return False  # continue
+        self.counter += 1
+        return self.counter >= self.patience  # stop?
+
+def save_checkpoint(model, optimizer, epoch, path):
+    torch.save({
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+    }, path)
+\end{lstlisting}
+
+Key training features:
+\begin{itemize}[nosep]
+    \item \textbf{Automatic Mixed Precision (AMP):} FP16 forward/backward with FP32 parameter updates via \texttt{torch.cuda.amp}, reducing memory usage and improving throughput.
+    \item \textbf{Early stopping:} Monitors validation loss with configurable patience (default 15 epochs).
+    \item \textbf{Gradient clipping:} Max-norm clipping at 1.0 prevents exploding gradients, particularly important for LSTM and attention layers.
+    \item \textbf{Checkpointing:} Best model weights are saved based on validation performance.
+\end{itemize}
+
+
+% ════════════════════════════════════════════════════════════════════════
+\section{Summary of Design Choices}
+% ════════════════════════════════════════════════════════════════════════
+
+\begin{table}[H]
+\centering
+\caption{Summary of architectural decisions}
+\small
+\begin{tabular}{p{3cm}p{4cm}p{6cm}}
+\toprule
+\textbf{Component} & \textbf{Choice} & \textbf{Justification} \\
+\midrule
+Price encoder & CNN + BiLSTM & Combines local pattern detection (CNN) with long-range temporal dependencies (LSTM) \\
+\midrule
+Document encoder & FinBERT + attention pooling & Domain-specific pre-training captures financial semantics; attention pooling selects informative tokens \\
+\midrule
+Graph encoder & Custom 2-layer GAT & Learns asymmetric inter-company relationships through multi-head attention on sector graph \\
+\midrule
+Macro encoder & 3-layer MLP & Low-dimensional input ($d{=}12$) does not require sequential modeling \\
+\midrule
+Fusion & Gated attention & Dynamic modality weighting adapts to market regime; surprise conditioning integrates event information \\
+\midrule
+Direction loss & ListNet & Optimizes cross-sectional ranking rather than point predictions \\
+\midrule
+Volatility loss & QLIKE & Asymmetric penalty appropriate for risk management \\
+\midrule
+Optimizer & AdamW & Decoupled weight decay provides better regularization \\
+\midrule
+Data splits & Chronological & Prevents future information leakage \\
+\midrule
+Normalization & Z-score (train-fit) & Prevents distribution leakage from val/test \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% ════════════════════════════════════════════════════════════════════════
+\section{Repository Structure}
+% ════════════════════════════════════════════════════════════════════════
+
+\begin{lstlisting}[language={}, basicstyle=\ttfamily\footnotesize, frame=none, numbers=none]
+financial-document-analysis/
+|-- configs/
+|   |-- experiment.yaml
+|   |-- data_collection.yaml
+|-- data/
+|   |-- raw/
+|   |   |-- prices/         <- OHLCV CSVs per ticker
+|   |   |-- sec_filings/    <- 10-K text per ticker
+|   |   |-- graph/          <- sector adjacency
+|   |   |-- macro/          <- macro indicator data
+|   |   |-- earnings/       <- EPS surprise data
+|   |-- processed/
+|   |-- targets/
+|   |   |-- direction_labels_multi_horizon.csv
+|   |   |-- volatility_targets.csv
+|   |   |-- fundamental_surprise_targets.csv
+|   |-- embeddings/
+|       |-- phase13_fusion_embeddings.pt
+|       |-- phase14_har_rv_raw.pt
+|-- src/
+|   |-- data/
+|   |   |-- preprocessing.py
+|   |   |-- price_dataset.py
+|   |   |-- document_dataset.py
+|   |   |-- target_builder.py
+|   |   |-- macro_features.py
+|   |-- features/
+|   |   |-- price_features.py
+|   |   |-- extract_embeddings.py
+|   |-- models/
+|   |   |-- price_model.py
+|   |   |-- document_model.py
+|   |   |-- gat_model.py
+|   |   |-- macro_model.py
+|   |   |-- fusion_model.py
+|   |   |-- losses.py
+|   |-- train/
+|       |-- common.py
+|-- notebooks/              <- Phase 01-14 analysis
+|-- docs/
+|-- models/                 <- Saved weights
+|-- reports/
+\end{lstlisting}
+
+
+\end{document}

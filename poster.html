@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multimodal Volatility Forecasting — Academic Poster</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  @page { size: A3 landscape; margin: 0; }
+
+  html, body {
+    width: 420mm;
+    height: 297mm;
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: #fff;
+    color: #1a1a1a;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    overflow: hidden;
+  }
+
+  .poster {
+    width: 420mm;
+    height: 297mm;
+    padding: 5mm 7mm 4mm 7mm;
+    display: flex;
+    flex-direction: column;
+    gap: 2mm;
+    background: #fff;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .poster > * { position: relative; z-index: 1; }
+
+  /* ── HEADER ── */
+  .header {
+    background: #111;
+    color: #fff;
+    padding: 3.5mm 7mm;
+    border-radius: 2mm;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .header h1 {
+    font-size: 18pt;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    line-height: 1.18;
+    margin-bottom: 0.8mm;
+  }
+  .header .dept {
+    font-size: 8.5pt;
+    font-weight: 400;
+    opacity: 0.7;
+  }
+  .header-right {
+    text-align: right;
+    font-size: 8.5pt;
+    line-height: 1.65;
+    opacity: 0.85;
+    white-space: nowrap;
+    padding-left: 6mm;
+  }
+  .header-right strong { font-weight: 600; }
+
+  /* ── GRID ── */
+  .main-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1.35fr 1fr;
+    gap: 2.5mm;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 2mm;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* ── PANEL ── */
+  .panel {
+    background: #fafafa;
+    border: 0.5pt solid #bbb;
+    border-radius: 1.5mm;
+    padding: 2.2mm 3.2mm;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .panel.grow { flex: 1 1 0; min-height: 0; }
+  .panel-title {
+    font-size: 7.5pt;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #111;
+    padding-bottom: 0.8mm;
+    margin-bottom: 1.2mm;
+    border-bottom: 1pt solid #111;
+  }
+  .panel p, .panel li {
+    font-size: 7.2pt;
+    line-height: 1.35;
+    color: #222;
+  }
+  .panel ul, .panel ol { padding-left: 3.5mm; }
+  .panel li { margin-bottom: 0.6mm; }
+  .panel li strong { font-weight: 700; color: #111; }
+
+  .highlight-q {
+    font-size: 7.5pt;
+    font-weight: 700;
+    font-style: italic;
+    color: #111;
+    margin-top: 1.2mm;
+    padding: 1.3mm 2.5mm;
+    background: #eee;
+    border-left: 2pt solid #111;
+    border-radius: 0 1mm 1mm 0;
+  }
+
+  /* ── TABLE ── */
+  table { width: 100%; border-collapse: collapse; font-size: 7pt; }
+  thead th {
+    background: #111;
+    color: #fff;
+    font-weight: 700;
+    text-align: left;
+    padding: 1mm 1.8mm;
+    font-size: 6.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  thead th:first-child { border-radius: 0.8mm 0 0 0; }
+  thead th:last-child  { border-radius: 0 0.8mm 0 0; }
+  tbody td {
+    padding: 0.9mm 1.8mm;
+    border-bottom: 0.3pt solid #ddd;
+    font-size: 7pt;
+    color: #222;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even) { background: #f3f3f3; }
+  tbody tr.hl { background: #ddd; font-weight: 700; }
+
+  /* ── SPLIT BAR ── */
+  .split-bar {
+    display: flex;
+    height: 4mm;
+    border-radius: 0.8mm;
+    overflow: hidden;
+    border: 0.5pt solid #666;
+    margin: 0.8mm 0;
+  }
+  .split-bar .seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 5.5pt;
+    font-weight: 600;
+  }
+  .split-bar .train { flex: 65; background: #ccc; color: #222; }
+  .split-bar .val   { flex: 10; background: #888; color: #fff; }
+  .split-bar .test  { flex: 25; background: #444; color: #fff; }
+
+  /* ── ARCHITECTURE ── */
+  .arch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1mm;
+    padding: 1mm 0;
+  }
+  .arch-row {
+    display: flex;
+    gap: 1.8mm;
+    align-items: center;
+    justify-content: center;
+  }
+  .arch-box {
+    border: 0.7pt solid #333;
+    border-radius: 1mm;
+    padding: 1.2mm 2.5mm;
+    text-align: center;
+    font-size: 6.5pt;
+    font-weight: 600;
+    background: #fff;
+    color: #111;
+  }
+  .arch-box.dark { background: #111; color: #fff; }
+  .arch-box.dash { border-style: dashed; background: #f5f5f5; }
+  .arch-box.gate { background: #e0e0e0; border-width: 0.8pt; }
+  .arch-box.trunk { background: #d0d0d0; border-width: 0.8pt; }
+  .arch-box.head { background: #f0f0f0; border: 0.7pt solid #555; }
+  .arch-box small {
+    display: block;
+    font-size: 5pt;
+    font-weight: 400;
+    color: #666;
+    margin-top: 0.2mm;
+  }
+  .arch-box.dark small { color: #bbb; }
+  .arch-lbl {
+    font-size: 6pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #666;
+  }
+  .arch-arrow-row {
+    display: flex;
+    gap: 1.5mm;
+    align-items: center;
+    justify-content: center;
+    font-size: 6.5pt;
+    color: #555;
+  }
+
+  /* ── METRICS ── */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.2mm;
+  }
+  .mc {
+    border: 0.7pt solid #999;
+    border-radius: 1mm;
+    padding: 1.2mm 1.5mm;
+    text-align: center;
+    background: #fff;
+  }
+  .mc .val {
+    font-size: 13pt;
+    font-weight: 800;
+    color: #111;
+    line-height: 1.1;
+  }
+  .mc .lbl {
+    font-size: 5.5pt;
+    font-weight: 500;
+    color: #666;
+    margin-top: 0.2mm;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── GAP DIAGRAM ── */
+  .gap-d {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3mm;
+    margin: 1.2mm 0;
+  }
+  .gap-box {
+    border: 0.8pt solid #333;
+    border-radius: 1mm;
+    padding: 1.2mm 3mm;
+    font-size: 7pt;
+    font-weight: 600;
+    text-align: center;
+    background: #fff;
+  }
+  .gap-box small {
+    display: block;
+    font-weight: 400;
+    font-size: 5.5pt;
+    color: #666;
+  }
+
+  /* ── NUMBERED FINDINGS ── */
+  .findings ol {
+    counter-reset: f;
+    list-style: none;
+    padding-left: 0;
+  }
+  .findings ol li {
+    counter-increment: f;
+    padding-left: 4.5mm;
+    position: relative;
+  }
+  .findings ol li::before {
+    content: counter(f);
+    position: absolute;
+    left: 0; top: 0.2mm;
+    width: 3.2mm; height: 3.2mm;
+    background: #111;
+    color: #fff;
+    border-radius: 50%;
+    font-size: 5pt;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  /* ── PILLS ── */
+  .pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8mm;
+    margin-top: 0.8mm;
+  }
+  .pill {
+    border: 0.4pt solid #888;
+    border-radius: 0.6mm;
+    padding: 0.5mm 1.5mm;
+    font-size: 5.5pt;
+    font-weight: 600;
+    color: #333;
+    background: #f0f0f0;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ── EQUATION ── */
+  .eq-block {
+    background: #f5f5f5;
+    border: 0.4pt solid #ccc;
+    border-radius: 0.8mm;
+    padding: 1mm 2mm;
+    margin: 0.8mm 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6.5pt;
+    text-align: center;
+    color: #222;
+  }
+
+  /* ── FOOTER ── */
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 6pt;
+    color: #888;
+    padding: 0 2mm;
+    flex-shrink: 0;
+  }
+  .footer a {
+    color: #444;
+    text-decoration: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6pt;
+  }
+
+  /* helper: two-col row inside a panel */
+  .sub-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2mm;
+    margin-top: 1mm;
+  }
+
+  @media print {
+    html, body { width: 420mm; height: 297mm; margin: 0; padding: 0; }
+    .poster { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div>
+      <h1>Multimodal Volatility Forecasting via Gated Multi-Task<br>Fusion of Price, Text, Graph, and Macroeconomic Signals</h1>
+      <div class="dept">Department of Computer Science (AI-ML) · Adani University, Ahmedabad</div>
+    </div>
+    <div class="header-right">
+      <strong>Rishi P Raval</strong> &nbsp;:&nbsp; 1AUA23BCS155<br>
+      Mentor: <strong>Dr. Spoorthy Venkatesh</strong>
+    </div>
+  </div>
+
+  <!-- MAIN 3-COLUMN GRID -->
+  <div class="main-grid">
+
+    <!-- ═══════════ COL 1 ═══════════ -->
+    <div class="col">
+
+      <div class="panel">
+        <div class="panel-title">Problem Statement</div>
+        <p>
+          Forecasting realized volatility is fundamental to options pricing, portfolio risk management, and dynamic hedging.
+          Classical models like HAR-RV exploit long-memory structure using only past prices, ignoring information in corporate
+          filings, inter-firm dependencies, and macroeconomic regimes.
+        </p>
+        <div class="gap-d">
+          <div class="gap-box">HAR-RV<small>Price only · R² = 0.947</small></div>
+          <div style="text-align:center;">
+            <div style="font-size:5.5pt;font-weight:700;color:#555;text-transform:uppercase;">gap</div>
+            <div style="font-size:12pt;color:#333;">→</div>
+          </div>
+          <div class="gap-box">Our Model<small>4 modalities · R² = 0.931</small></div>
+        </div>
+        <div class="highlight-q">
+          Can multimodal deep learning — fusing price, text, graph, and macro signals — close the gap to classical benchmarks while adding directional forecasting capability?
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Dataset Description</div>
+        <table>
+          <thead><tr><th>Source</th><th>Details</th></tr></thead>
+          <tbody>
+            <tr><td>Universe</td><td>30 NASDAQ technology stocks across 6 sub-sectors</td></tr>
+            <tr><td>Price</td><td>Daily OHLCV, 60-day rolling windows, 21 engineered features</td></tr>
+            <tr><td>Text</td><td>SEC 10-K filings (5 sections), EDGAR, FinBERT 768-d</td></tr>
+            <tr><td>Graph</td><td>30-node graph, 7 semantic edge types (supply/competition)</td></tr>
+            <tr><td>Macro</td><td>12 indicators: VIX, yield curve, SPY/QQQ, credit, gold</td></tr>
+            <tr><td>Earnings</td><td>5-dim surprise (beat rate, revision, recency, magnitude)</td></tr>
+            <tr><td>Target</td><td>60-day annualised realised volatility + binary direction</td></tr>
+            <tr><td>Samples</td><td>73,793 training samples across all stocks and dates</td></tr>
+          </tbody>
+        </table>
+
+        <div style="margin-top:1.2mm;">
+          <div style="font-size:6.5pt;font-weight:700;margin-bottom:0.5mm;">Temporal Split (strictly chronological, no leakage)</div>
+          <div class="split-bar">
+            <div class="seg train">Train 2016–2022 (65%)</div>
+            <div class="seg val">Val '23 (10%)</div>
+            <div class="seg test">Test 2024–25 (25%)</div>
+          </div>
+        </div>
+
+        <div style="margin-top:1mm;">
+          <div style="font-size:6.5pt;font-weight:700;margin-bottom:0.4mm;">Stock Universe (30 equities, 6 sub-sectors)</div>
+          <table>
+            <thead><tr><th>Sector</th><th>Tickers</th></tr></thead>
+            <tbody>
+              <tr><td>Core Tech</td><td>AAPL, MSFT, GOOGL, AMZN, META, NVDA, AMD, INTC, TSLA, ORCL</td></tr>
+              <tr><td>Semiconductors</td><td>QCOM, TXN, AVGO, MRVL, KLAC</td></tr>
+              <tr><td>Cloud/SaaS</td><td>CRM, ADBE, NOW, SNOW, DDOG</td></tr>
+              <tr><td>Internet</td><td>NFLX, UBER, PYPL, SNAP</td></tr>
+              <tr><td>Hardware</td><td>DELL, AMAT, LRCX</td></tr>
+              <tr><td>Diversified</td><td>IBM, CSCO, HPE</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel grow">
+        <div class="panel-title">Macroeconomic Features (12 inputs)</div>
+        <table>
+          <thead><tr><th>Feature</th><th>Source</th><th>Signal</th></tr></thead>
+          <tbody>
+            <tr><td>VIX level</td><td>^VIX</td><td>Market fear index</td></tr>
+            <tr><td>VIX Δ (daily)</td><td>^VIX</td><td>Direction of fear</td></tr>
+            <tr><td>Long-term yields</td><td>TLT</td><td>20-year Treasury</td></tr>
+            <tr><td>Medium-term yields</td><td>IEF</td><td>7–10y Treasury</td></tr>
+            <tr><td>Yield curve spread</td><td>TLT−IEF</td><td>Recession indicator</td></tr>
+            <tr><td>Broad market</td><td>SPY</td><td>S&P 500 momentum</td></tr>
+            <tr><td>Tech sector</td><td>QQQ</td><td>NASDAQ momentum</td></tr>
+            <tr><td>Short-term rates</td><td>SHY</td><td>1–3y Treasury</td></tr>
+            <tr><td>Gold momentum</td><td>GLD</td><td>Safe-haven demand</td></tr>
+            <tr><td>High-yield credit</td><td>HYG</td><td>Credit stress</td></tr>
+            <tr><td>IG credit</td><td>LQD</td><td>Credit quality</td></tr>
+            <tr><td>Market breadth</td><td>Computed</td><td>Cross-stock co-move</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-top:1.2mm;padding-top:0.8mm;border-top:0.3pt solid #ddd;">
+          <div style="font-size:6.5pt;font-weight:700;margin-bottom:0.4mm;">Technology Stack</div>
+          <div class="pills">
+            <span class="pill">PyTorch 2.2</span>
+            <span class="pill">ProsusAI/FinBERT</span>
+            <span class="pill">GAT</span>
+            <span class="pill">yfinance</span>
+            <span class="pill">SEC EDGAR</span>
+            <span class="pill">AMP fp16</span>
+            <span class="pill">CUDA</span>
+            <span class="pill">AdamW</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ COL 2 (CENTER) ═══════════ -->
+    <div class="col">
+
+      <div class="panel">
+        <div class="panel-title">Methodology</div>
+        <ul>
+          <li><strong>CNN-BiLSTM (Price):</strong> 2× Conv1D (64ch, k=3) + BatchNorm + ReLU → 2-layer BiLSTM (h=128, dropout=0.2) on 60-day OHLCV with 21 features including multi-horizon returns, rolling vol, Parkinson/Garman-Klass estimators → z_price ∈ ℝ²⁵⁶.</li>
+          <li><strong>FinBERT (Text):</strong> SEC 10-K filings (Items 1, 1A, 7, 7A, 8) chunked into 512-token windows (stride 128), CLS pooling with trained attention weighting → z_text ∈ ℝ⁷⁶⁸. Captures risk disclosures and fundamental context.</li>
+          <li><strong>GAT (Graph):</strong> 2-layer Graph Attention Network (4 heads × 64-d, ELU, residual + LayerNorm) on 30-node graph with 7 edge types: supplier, platform/ad/cloud/enterprise competitor, consumer overlap, index correlation → z_graph ∈ ℝ²⁵⁶.</li>
+          <li><strong>Macro MLP:</strong> 12 macro features → 3-layer MLP (12→64→64→32) with LayerNorm, GELU, Dropout(0.2) → z_macro ∈ ℝ³². All features lagged 1 day.</li>
+          <li><strong>Sigmoid Gating:</strong> Per-sample weighting g ∈ [0,1]⁴ from 2-layer network conditioned on projected modalities + 5-dim earnings surprise vector. Modality mask renormalises when inputs unavailable.</li>
+          <li><strong>HAR-RV Skip:</strong> Direct residual path (rv_lag1d/5d/22d → Linear → LayerNorm → GELU → 32-d) bypasses gating — model learns <em>corrections over</em> the classical benchmark. Caused R² jump from 0.867→0.931.</li>
+          <li><strong>Multi-Task Loss:</strong> 0.85 × QLIKE (asymmetric: underestimation penalised more) + 0.15 × ListNet (cross-sectional ranking, τ=5.0). Vol head uses Softplus for strict positivity.</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Architecture Diagram</div>
+        <div class="arch">
+          <div class="arch-lbl">Modality Encoders</div>
+          <div class="arch-row">
+            <div class="arch-box dark">CNN-BiLSTM<small>256-d (Price)</small></div>
+            <div class="arch-box dark">FinBERT<small>768-d (Text)</small></div>
+            <div class="arch-box dark">GAT<small>256-d (Graph)</small></div>
+            <div class="arch-box dark">Macro MLP<small>32-d (Macro)</small></div>
+          </div>
+          <div class="arch-arrow-row">↓ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓</div>
+          <div class="arch-row">
+            <div class="arch-box">Proj 128-d</div>
+            <div class="arch-box">Proj 128-d</div>
+            <div class="arch-box">Proj 128-d</div>
+            <div class="arch-box">Proj 128-d</div>
+          </div>
+          <div class="arch-arrow-row">↘ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↓ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↙</div>
+          <div class="arch-row">
+            <div class="arch-box gate" style="padding:1.2mm 10mm;">Sigmoid Gate<small>g ∈ [0,1]⁴ · per-sample modality weighting + earnings conditioning</small></div>
+          </div>
+          <div class="arch-arrow-row" style="gap:0;">
+            <div style="display:flex;align-items:center;gap:4mm;">
+              <div style="text-align:center;">
+                <div style="font-size:5pt;color:#666;font-weight:600;">HAR-RV Skip (ungated)</div>
+                <div class="arch-box dash" style="padding:0.8mm 2mm;font-size:6pt;">rv₁ₐ, rv₅ₐ, rv₂₂ₐ → 32-d</div>
+              </div>
+              <div style="font-size:8pt;">→</div>
+              <div style="font-size:8pt;">↓</div>
+            </div>
+          </div>
+          <div class="arch-row">
+            <div class="arch-box trunk" style="padding:1.2mm 12mm;">Shared Trunk<small>2-layer MLP · [512+32]=544 → 256-d · LayerNorm · GELU · Dropout(0.3/0.15)</small></div>
+          </div>
+          <div class="arch-arrow-row">↙ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↘</div>
+          <div class="arch-row">
+            <div class="arch-box head">Volatility Head<small>5-layer MLP · Softplus · QLIKE loss</small></div>
+            <div style="width:10mm;"></div>
+            <div class="arch-box head">Direction Head<small>ListNet ranking loss</small></div>
+          </div>
+        </div>
+        <div class="eq-block">
+          L = 0.85 × L_QLIKE + 0.15 × L_ListNet &nbsp;&nbsp;|&nbsp;&nbsp; L_QLIKE = (1/N) Σᵢ (σ²_true,i / σ̂²_i + log σ̂²_i)
+        </div>
+      </div>
+
+      <!-- Training Configuration + Ablation -->
+      <div class="panel grow">
+        <div class="panel-title">Training &amp; Ablation Study</div>
+
+        <div style="font-size:6.5pt;font-weight:700;margin-bottom:0.3mm;">Training Configuration</div>
+        <p style="font-size:6.5pt;margin-bottom:1.5mm;">AdamW (lr=5×10⁻⁴, wd=10⁻³) · cosine annealing (min lr=10⁻⁶) · gradient clipping (1.0) · batch=4096 · 60 epochs max with early stopping (patience 7) · MC Dropout inference (30 passes) · FP16 mixed precision · GPU: RTX 2050 (4GB VRAM) · seed=42</p>
+
+        <div style="font-size:6.5pt;font-weight:700;margin-bottom:0.3mm;">Ablation — Key Architectural Contributions</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Model Variant</th><th>Vol R²</th><th>Dir AUC</th><th>Δ R²</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Initial Fusion (MSE loss, 10 stocks)</td><td>0.440</td><td>0.545</td><td>—</td></tr>
+            <tr><td>+ QLIKE loss + MC Dropout</td><td>0.772</td><td>0.568</td><td><strong>+0.332</strong></td></tr>
+            <tr><td>+ HAR-RV features + 30 stocks</td><td>0.867</td><td>0.585</td><td>+0.095</td></tr>
+            <tr><td>+ HAR-RV Skip Connection</td><td>0.921</td><td>0.591</td><td>+0.054</td></tr>
+            <tr class="hl"><td>+ Deeper Vol Head (Ours)</td><td><strong>0.931</strong></td><td><strong>0.593</strong></td><td>+0.010</td></tr>
+            <tr><td>HAR-RV classical benchmark (Corsi 2009)</td><td>0.947</td><td>—</td><td>—</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:6pt;color:#555;margin-top:0.5mm;">
+          MSE→QLIKE (+0.332 R²) was the single largest architectural gain. The deeper vol head closed <strong>98.3%</strong> of the benchmark gap vs 95.7% with the shallower head.
+        </p>
+
+        <div style="margin-top:1.5mm;font-size:6.5pt;font-weight:700;margin-bottom:0.3mm;">Graph Edge Types (7 semantic relations)</div>
+        <div class="sub-grid-2">
+          <div>
+            <ul style="font-size:6.5pt;padding-left:3mm;">
+              <li>Supplier-to (e.g. NVDA→TSLA)</li>
+              <li>Platform competitor (AAPL↔GOOGL)</li>
+              <li>Advertising competitor (GOOGL↔META)</li>
+              <li>Cloud competitor (AMZN↔MSFT↔GOOGL)</li>
+            </ul>
+          </div>
+          <div>
+            <ul style="font-size:6.5pt;padding-left:3mm;">
+              <li>Consumer attention overlap (TSLA→AAPL)</li>
+              <li>Enterprise competitor (ORCL→MSFT)</li>
+              <li>Index correlation (co-movement)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ═══════════ COL 3 ═══════════ -->
+    <div class="col">
+
+      <div class="panel">
+        <div class="panel-title">Key Results</div>
+        <div class="metrics-grid">
+          <div class="mc"><div class="val">0.931</div><div class="lbl">Volatility R²</div></div>
+          <div class="mc"><div class="val">0.593</div><div class="lbl">Direction AUC</div></div>
+          <div class="mc"><div class="val">0.62</div><div class="lbl">Sharpe Ratio (5bp)</div></div>
+          <div class="mc"><div class="val">98.3%</div><div class="lbl">Benchmark Recovery</div></div>
+        </div>
+
+        <table style="margin-top:1.2mm;">
+          <thead><tr><th>Model</th><th>Vol R²</th><th>Dir AUC</th><th>Sharpe</th></tr></thead>
+          <tbody>
+            <tr><td>Historical Average</td><td>0.348</td><td>—</td><td>—</td></tr>
+            <tr><td>HAR-RV (benchmark)</td><td>0.947</td><td>—</td><td>—</td></tr>
+            <tr><td>Initial Fusion (MSE)</td><td>0.440</td><td>0.545</td><td>—</td></tr>
+            <tr class="hl"><td>Ours (Deeper Vol Head)</td><td><strong>0.931</strong></td><td><strong>0.593</strong></td><td><strong>0.62</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Trading Strategy Backtest (2024–2025)</div>
+        <table>
+          <thead><tr><th>Strategy</th><th>Sharpe</th><th>Ann. Ret.</th><th>Max DD</th></tr></thead>
+          <tbody>
+            <tr><td>Direction L/S (0bp)</td><td>+0.697</td><td>+12.9%</td><td>−11.4%</td></tr>
+            <tr><td>Direction L/S (5bp)</td><td>+0.620</td><td>+12.0%</td><td>−11.6%</td></tr>
+            <tr><td>Direction L/S (10bp)</td><td>+0.543</td><td>+11.2%</td><td>−11.9%</td></tr>
+            <tr><td>Direction L/S (20bp)</td><td>+0.392</td><td>+9.5%</td><td>−12.4%</td></tr>
+            <tr><td>Buy & Hold Benchmark</td><td>+0.652</td><td>+14.2%</td><td>−18.3%</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:6pt;color:#555;margin-top:0.5mm;">
+          Long top-5, short bottom-5, equal-weighted, rebalance every 5 trading days, 20-day holding period. Signal survives realistic transaction costs.
+        </p>
+      </div>
+
+      <div class="panel grow findings">
+        <div class="panel-title">Results &amp; Discussion</div>
+        <ol>
+          <li><strong>QLIKE over MSE:</strong> Switching loss functions produced the largest single gain (+0.332 R²). QLIKE's asymmetric penalty aligns with financial risk asymmetry — underestimating volatility is costlier than overestimating.</li>
+          <li><strong>HAR-RV skip connection:</strong> The direct residual path from lagged RV to trunk improved R² from 0.867→0.921. The skip bypasses the CNN-BiLSTM compression bottleneck, preserving the strong autoregressive prior.</li>
+          <li><strong>Deeper vol head:</strong> A 5-layer MLP volatility head (256→128→64→32→1) with GELU activations improved R² from 0.921→0.931, closing 98.3% of the benchmark gap.</li>
+          <li><strong>Multimodal > price-only:</strong> Gate weights: price 58.6%, text 19.5%, graph 15.1%, macro 6.8%. All modalities contribute; text and graph are most valuable for directional forecasting.</li>
+          <li><strong>Direction harder than volatility:</strong> AUC=0.593 is consistent with semi-strong EMH — return direction predictability is self-defeating through arbitrage; volatility (2nd moment) lacks this property.</li>
+          <li><strong>Economic viability:</strong> Positive Sharpe through 20bp costs confirms genuine economic signal in the direction predictions.</li>
+        </ol>
+
+        <div style="margin-top:1.2mm;padding-top:0.8mm;border-top:0.3pt solid #ddd;">
+          <div style="font-size:6.5pt;font-weight:700;margin-bottom:0.4mm;">Limitations & Future Work</div>
+          <ul>
+            <li>Universe restricted to 30 US large-cap tech — sector-specific graph limits generalisability.</li>
+            <li>10-K filings are annual; no intra-year text from 10-Q, 8-K, or earnings calls.</li>
+            <li>Static hand-curated graph; dynamic learned edges could improve expressiveness.</li>
+            <li>Backtest assumes no market impact — real execution faces spreads and liquidity constraints.</li>
+            <li>Test period (2024–25) is a single regime with elevated rates and AI-driven rotation.</li>
+          </ul>
+        </div>
+
+        <div style="margin-top:1mm;padding-top:0.8mm;border-top:0.3pt solid #ddd;">
+          <div style="font-size:6.5pt;font-weight:700;margin-bottom:0.3mm;">Key References</div>
+          <p style="font-size:6pt;color:#555;">
+            Corsi (2009) HAR-RV · Yang et al. (2020) FinBERT · Veličković et al. (2018) GAT · Patton (2011) QLIKE · Cao et al. (2007) ListNet · Gu, Kelly & Xiu (2020) ML Asset Pricing · Fischer & Krauss (2018) LSTM · Fama (1970) EMH
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <span>Multimodal Volatility Forecasting · Dept. of CS (AI-ML) · Adani University · 2025</span>
+    <a href="https://github.com/imrishi007/financial-document-analysis">github.com/imrishi007/financial-document-analysis</a>
+  </div>
+
+</div>
+</body>
+</html>

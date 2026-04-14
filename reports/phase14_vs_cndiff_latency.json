@@ -1,0 +1,96 @@
+{
+  "device": "cuda",
+  "seed": 2026,
+  "fairness_note": "Latency comparison is real. Task equivalence is not: Phase14 is a trained scalar volatility model, while CNDiff here is benchmarked on its native multivariate diffusion setup. Retrain CNDiff on the same volatility target before interpreting accuracy or efficiency as an apples-to-apples winner.",
+  "results": [
+    {
+      "name": "Phase14Fusion",
+      "device": "cuda",
+      "batch_size": 8,
+      "warmup_steps": 2,
+      "timed_steps": 3,
+      "mean_ms": 6.540033333294559,
+      "median_ms": 6.418400000256952,
+      "p95_ms": 6.974870000703959,
+      "min_ms": 6.1649999988731,
+      "max_ms": 7.036700000753626,
+      "samples_per_sec": 1223.2353555864797,
+      "param_count": 567431,
+      "output_shape": [
+        8
+      ],
+      "metadata": {
+        "checkpoint": "models\\phase14_fusion_best.pt",
+        "embeddings": "data\\embeddings\\phase13_fusion_embeddings.pt",
+        "har_rv": "data\\embeddings\\phase14_har_rv_raw.pt",
+        "offset": 0,
+        "available_samples": 73793,
+        "task": "scalar volatility regression"
+      }
+    },
+    {
+      "name": "CNDiff(copies=1)",
+      "device": "cuda",
+      "batch_size": 8,
+      "warmup_steps": 2,
+      "timed_steps": 3,
+      "mean_ms": 2016.2540666642599,
+      "median_ms": 2033.7751999977627,
+      "p95_ms": 2066.56480999809,
+      "min_ms": 1944.7788999968907,
+      "max_ms": 2070.2080999981263,
+      "samples_per_sec": 3.967753931544647,
+      "param_count": 279110,
+      "output_shape": [
+        8,
+        14,
+        8
+      ],
+      "metadata": {
+        "task": "native multivariate sequence generation",
+        "seq_len": 96,
+        "pred_len": 14,
+        "feature_dim": 8,
+        "diffusion_steps": 100,
+        "copies_averaged": 1,
+        "internal_batch_size": 8,
+        "checkpoint": "external\\CNDiff\\saved_models\\exchange.pth",
+        "config": "external\\CNDiff\\cfg\\exchange.yaml"
+      }
+    },
+    {
+      "name": "CNDiff(copies=10)",
+      "device": "cuda",
+      "batch_size": 8,
+      "warmup_steps": 2,
+      "timed_steps": 3,
+      "mean_ms": 2252.485399997871,
+      "median_ms": 2242.87839999306,
+      "p95_ms": 2320.9839999988617,
+      "min_ms": 2184.915400001046,
+      "max_ms": 2329.6623999995063,
+      "samples_per_sec": 3.551632343547071,
+      "param_count": 279110,
+      "output_shape": [
+        8,
+        14,
+        8
+      ],
+      "metadata": {
+        "task": "native multivariate sequence generation",
+        "seq_len": 96,
+        "pred_len": 14,
+        "feature_dim": 8,
+        "diffusion_steps": 100,
+        "copies_averaged": 10,
+        "internal_batch_size": 80,
+        "checkpoint": "external\\CNDiff\\saved_models\\exchange.pth",
+        "config": "external\\CNDiff\\cfg\\exchange.yaml"
+      }
+    }
+  ],
+  "comparison": {
+    "CNDiff(copies=1)_vs_Phase14Fusion_latency_ratio": 308.2941575235927,
+    "CNDiff(copies=10)_vs_Phase14Fusion_latency_ratio": 344.41497240246866
+  }
+}

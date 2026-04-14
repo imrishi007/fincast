@@ -1,0 +1,578 @@
+%══════════════════════════════════════════════════════════════════════════════
+\section{Phase 4: Model Design \& Implementation}
+%══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Architecture Overview}
+
+The system consists of four modality-specific encoders whose outputs are fused by a learned gating mechanism. Two task heads produce the final predictions.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figures/architecture.png}
+\caption{Complete multimodal fusion architecture. The HAR-RV skip connection (red arrow) bypasses the CNN-BiLSTM bottleneck to directly feed autoregressive features into the fusion trunk.}
+\end{figure}
+
+\subsection{Model 1: CNN-BiLSTM Price Encoder}
+
+\subsubsection{Design Rationale}
+
+\begin{itemize}[noitemsep]
+    \item \textbf{1D-CNN:} Detects local patterns in 3-day windows (e.g., momentum, reversals). Uses 64 filters to learn 64 different pattern types simultaneously.
+    \item \textbf{BiLSTM:} Captures how CNN patterns evolve over the full 60-day window. Bidirectional processing gives context from both past and future within the window.
+    \item \textbf{Why both?} CNN handles local structure; BiLSTM handles temporal evolution. Together they capture patterns at multiple timescales.
+\end{itemize}
+
+\begin{lstlisting}[caption={CNN-BiLSTM price encoder (src/models/price\_model.py)}]
+class PriceDirectionModel(nn.Module):
+    def __init__(self, num_features, conv_channels=64,
+                 lstm_hidden=128):
+        super().__init__()
+        # Local pattern extraction: two Conv1d layers
+        self.conv = nn.Sequential(
+            nn.Conv1d(num_features, conv_channels,
+                      kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm1d(conv_channels),
+            nn.Conv1d(conv_channels, conv_channels,
+                      kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm1d(conv_channels),
+        )
+        # Temporal evolution: 2-layer BiLSTM
+        self.lstm = nn.LSTM(
+            input_size=conv_channels,
+            hidden_size=lstm_hidden,
+            num_layers=2,
+            batch_first=True,
+            dropout=0.2,
+            bidirectional=True,  # 128*2 = 256-d output
+        )
+        # Classification head
+        self.head = nn.Sequential(
+            nn.Linear(lstm_hidden * 2, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 2),
+        )
+
+    def forward(self, x):
+        # x: [B, 60, 21]
+        x = x.transpose(1, 2)   # [B, 21, 60] for Conv1d
+        x = self.conv(x)        # [B, 64, 60]
+        x = x.transpose(1, 2)   # [B, 60, 64] for LSTM
+        x, _ = self.lstm(x)     # [B, 60, 256]
+        x = x[:, -1, :]         # [B, 256] last timestep
+        return self.head(x)     # [B, 2]
+\end{lstlisting}
+
+\textbf{Output:} 256-dimensional embedding per stock per day.
+
+\subsection{Model 2: Graph Attention Network (GAT)}
+
+\subsubsection{Design Rationale}
+
+Stocks do not move in isolation. NVIDIA's supply relationships with Apple and Microsoft, or Google's competition with Meta in digital advertising, create cross-stock dependencies that a stock-independent model cannot capture. The GAT propagates information across the 30-stock graph, allowing each stock's representation to incorporate signals from its business neighbors.
+
+\textbf{Key constraint:} Implemented in pure PyTorch without PyTorch Geometric, as required by the project specification.
+
+\subsubsection{GAT Attention Mechanism}
+
+Following Veli\v{c}kovi\'c et al.\ (2018), each GAT layer computes:
+
+\begin{align}
+    e_{ij} &= \text{LeakyReLU}\left(\mathbf{a}^T [\mathbf{W}h_i \| \mathbf{W}h_j]\right) \\
+    \alpha_{ij} &= \frac{\exp(e_{ij})}{\sum_{k \in \mathcal{N}(i)} \exp(e_{ik})} \\
+    h'_i &= \sigma\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij} \mathbf{W} h_j\right)
+\end{align}
+
+\begin{lstlisting}[caption={Custom GAT layer (src/models/gat\_model.py)}]
+class GATLayer(nn.Module):
+    """Single-head graph attention layer."""
+    def __init__(self, in_features, out_features,
+                 negative_slope=0.2, dropout=0.1):
+        super().__init__()
+        self.W = nn.Linear(in_features, out_features,
+                           bias=False)
+        self.a = nn.Parameter(
+            torch.empty(2 * out_features))
+        nn.init.xavier_uniform_(self.a.unsqueeze(0))
+        self.leaky_relu = nn.LeakyReLU(negative_slope)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, edge_index, edge_weight=None):
+        # x: [N, in_features]
+        # edge_index: [2, E] directed edges
+        N = x.size(0)
+        Wh = self.W(x)                  # [N, out_feat]
+        src, tgt = edge_index            # each [E]
+
+        # Attention coefficients
+        Wh_src = Wh[src]                 # [E, out_feat]
+        Wh_tgt = Wh[tgt]                # [E, out_feat]
+        cat = torch.cat([Wh_src, Wh_tgt], dim=1)
+        e = self.leaky_relu(cat @ self.a)  # [E]
+
+        # Sparse softmax per target node
+        e_max = torch.full((N,), float("-inf"),
+                           device=x.device)
+        e_max.scatter_reduce_(0, tgt, e,
+            reduce="amax", include_self=False)
+        e_exp = torch.exp(e - e_max[tgt])
+        e_sum = torch.zeros(N, device=x.device)
+        e_sum.scatter_add_(0, tgt, e_exp)
+        alpha = e_exp / (e_sum[tgt] + 1e-10)
+        alpha = self.dropout(alpha)
+
+        # Weighted aggregation
+        messages = alpha.unsqueeze(1) * Wh_src
+        out = torch.zeros(N, Wh.size(1),
+                          device=x.device)
+        out.scatter_add_(0,
+            tgt.unsqueeze(1).expand_as(messages),
+            messages)
+        return out
+\end{lstlisting}
+
+\begin{lstlisting}[caption={Graph-enhanced model with residual GAT (src/models/gat\_model.py)}]
+class GraphEnhancedModel(nn.Module):
+    def __init__(self, num_features=10,
+                 encoder_dim=256, gat_hidden=64,
+                 gat_heads=4, num_classes=2):
+        super().__init__()
+        # Shared CNN-BiLSTM price encoder
+        self.conv = nn.Sequential(
+            nn.Conv1d(num_features, 64, 3, padding=1),
+            nn.ReLU(), nn.BatchNorm1d(64),
+            nn.Conv1d(64, 64, 3, padding=1),
+            nn.ReLU(), nn.BatchNorm1d(64))
+        self.lstm = nn.LSTM(64, 128, num_layers=2,
+            batch_first=True, dropout=0.2,
+            bidirectional=True)
+        # Projection + two-layer GAT with residuals
+        gat_in_dim = gat_hidden * gat_heads
+        self.node_proj = nn.Linear(encoder_dim,
+                                    gat_in_dim)
+        self.gat1 = MultiHeadGAT(gat_in_dim,
+            gat_hidden, gat_heads)
+        self.gat_norm1 = nn.LayerNorm(gat_in_dim)
+        self.gat2 = MultiHeadGAT(gat_in_dim,
+            gat_hidden, gat_heads)
+        self.gat_norm2 = nn.LayerNorm(gat_in_dim)
+        self.head = nn.Sequential(
+            nn.Linear(gat_in_dim, 128), nn.ReLU(),
+            nn.Dropout(0.2), nn.Linear(128, 2))
+
+    def forward(self, x, edge_index, edge_weight=None):
+        # x: [N, T, F] for N companies
+        h = self.encode_price(x)        # [N, 256]
+        h = self.node_proj(h)           # [N, gat_dim]
+        # GAT layer 1 + residual + LayerNorm
+        h1 = F.elu(self.gat1(h, edge_index))
+        h = self.gat_norm1(h + h1)
+        # GAT layer 2 + residual + LayerNorm
+        h2 = F.elu(self.gat2(h, edge_index))
+        h = self.gat_norm2(h + h2)
+        return self.head(h)             # [N, 2]
+\end{lstlisting}
+
+\textbf{Result:} GAT contributes $+2.6\%$ AUC over a no-GAT ablation, confirming that inter-company information propagation adds discriminative signal.
+
+\subsection{Model 3: FinBERT Document Encoder}
+
+\begin{lstlisting}[caption={FinBERT with attention pooling (src/models/document\_model.py)}]
+class AttentionPooling(nn.Module):
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.score = nn.Linear(hidden_size, 1)
+
+    def forward(self, sequence_output, attention_mask):
+        scores = self.score(sequence_output).squeeze(-1)
+        scores = scores.masked_fill(
+            attention_mask == 0, float("-inf"))
+        weights = torch.softmax(scores, dim=-1) \
+            .unsqueeze(-1)
+        return torch.sum(
+            sequence_output * weights, dim=1)
+
+class DocumentDirectionModel(nn.Module):
+    def __init__(self, backbone="ProsusAI/finbert",
+                 dropout=0.2):
+        super().__init__()
+        self.encoder = AutoModel.from_pretrained(
+            backbone)
+        hidden = self.encoder.config.hidden_size  # 768
+        self.pool = AttentionPooling(hidden)
+        self.head = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(hidden, 256),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(256, 2),
+        )
+
+    def forward(self, input_ids, attention_mask):
+        output = self.encoder(
+            input_ids=input_ids,
+            attention_mask=attention_mask)
+        pooled = self.pool(
+            output.last_hidden_state, attention_mask)
+        return self.head(pooled)
+\end{lstlisting}
+
+\textbf{Why frozen backbone?} With only 227 training filings, fine-tuning FinBERT's 110M parameters would cause catastrophic overfitting. Only the attention pooling layer and head (small number of parameters) are trained.
+
+\textbf{Output:} 768-dimensional embedding per (stock, year) pair.
+
+\subsection{Model 4: Macro MLP Encoder}
+
+\begin{lstlisting}[caption={Macro feature encoder (src/models/macro\_model.py)}]
+class MacroStateModel(nn.Module):
+    """3-layer MLP: 12 -> 64 -> 64 -> 32."""
+    def __init__(self, input_dim=12, hidden_dim=64,
+                 output_dim=32, dropout=0.2):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, output_dim),
+        )
+
+    def encode(self, x):
+        return self.encoder(x)  # [B, 12] -> [B, 32]
+\end{lstlisting}
+
+\textbf{Output:} 32-dimensional embedding encoding the current macroeconomic regime.
+
+\subsection{Fusion Model with Gated Attention}
+
+\subsubsection{Architecture}
+
+The fusion model combines all four modality embeddings through a learned sigmoid gating mechanism:
+
+\begin{equation}
+    g_i = \frac{\sigma(f_{\text{gate}}(\mathbf{z}))_i \cdot m_i}{\sum_{j=1}^{4} \sigma(f_{\text{gate}}(\mathbf{z}))_j \cdot m_j + \epsilon}
+\end{equation}
+
+where $m_i \in \{0,1\}$ is the availability mask, $\sigma$ is sigmoid, and $f_{\text{gate}}$ is a two-layer MLP.
+
+\begin{lstlisting}[caption={Phase 14 Fusion Model with HAR-RV skip (src/models/fusion\_model.py)}]
+class Phase14FusionModel(nn.Module):
+    """Adds HAR-RV skip connection to gated fusion."""
+    NUM_MODALITIES = 4
+
+    def __init__(self, price_dim=256, har_rv_dim=3,
+                 har_proj_dim=32, gat_dim=256,
+                 doc_dim=768, macro_dim=32,
+                 surprise_dim=5, proj_dim=128,
+                 hidden_dim=256, dropout=0.3):
+        super().__init__()
+        # HAR-RV skip (direct, ungated)
+        self.har_rv_skip = nn.Sequential(
+            nn.Linear(har_rv_dim, har_proj_dim),
+            nn.LayerNorm(har_proj_dim), nn.GELU())
+        # Per-modality projectors
+        def _proj(in_dim):
+            return nn.Sequential(
+                nn.Linear(in_dim, proj_dim),
+                nn.LayerNorm(proj_dim),
+                nn.GELU(),
+                nn.Dropout(dropout * 0.5))
+        self.price_proj = _proj(price_dim)
+        self.gat_proj   = _proj(gat_dim)
+        self.doc_proj   = _proj(doc_dim)
+        self.macro_proj = _proj(macro_dim)
+        # Gating (surprise-conditioned)
+        gate_in = proj_dim * 4 + surprise_dim
+        self.gate = nn.Sequential(
+            nn.Linear(gate_in, hidden_dim), nn.GELU(),
+            nn.Linear(hidden_dim, 4), nn.Sigmoid())
+        # Shared trunk: gated + HAR-RV
+        trunk_in = proj_dim * 4 + har_proj_dim
+        self.trunk = nn.Sequential(
+            nn.Linear(trunk_in, hidden_dim),
+            nn.LayerNorm(hidden_dim), nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim), nn.GELU(),
+            nn.Dropout(dropout * 0.5))
+        # Volatility head (Softplus ensures > 0)
+        self.volatility_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.GELU(), nn.Dropout(dropout * 0.5),
+            nn.Linear(hidden_dim//2, hidden_dim//4),
+            nn.GELU(),
+            nn.Linear(hidden_dim // 4, 1),
+            nn.Softplus())
+        # Direction head
+        self.direction_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 4),
+            nn.GELU(), nn.Linear(hidden_dim//4, 2))
+\end{lstlisting}
+
+\begin{lstlisting}[caption={Forward pass with gating and HAR-RV skip}]
+    def forward(self, price_emb, har_rv_raw, gat_emb,
+                doc_emb, macro_emb, surprise_feat,
+                modality_mask):
+        p = self.price_proj(price_emb)
+        g = self.gat_proj(gat_emb)
+        d = self.doc_proj(doc_emb)
+        m = self.macro_proj(macro_emb)
+        har = self.har_rv_skip(har_rv_raw)  # [B, 32]
+
+        stacked = torch.stack([p, g, d, m], dim=1)
+        stacked = stacked * modality_mask.unsqueeze(-1)
+        flat = stacked.view(stacked.size(0), -1)
+        gate_in = torch.cat([flat, surprise_feat], 1)
+        gates = self.gate(gate_in)
+        gates = gates * modality_mask
+        gates = gates / (gates.sum(1, True) + 1e-8)
+
+        weighted = stacked * gates.unsqueeze(-1)
+        fused = weighted.view(weighted.size(0), -1)
+        # Concatenate gated + HAR-RV skip
+        trunk_in = torch.cat([fused, har], dim=-1)
+        h = self.trunk(trunk_in)
+
+        vol = self.volatility_head(h).squeeze(-1)
+        dir_logits = self.direction_head(h)
+        return {"volatility_pred": vol,
+                "direction_logits": dir_logits,
+                "gate_weights": gates}
+\end{lstlisting}
+
+\textbf{HAR-RV Skip Connection (Phase 14 key innovation):}
+The CNN-BiLSTM compresses $[60, 21] \to 256$ dimensions, losing some autoregressive signal. The skip connection extracts \texttt{rv\_lag1d}, \texttt{rv\_lag5d}, \texttt{rv\_lag22d} from the last timestep and feeds them \textit{directly} into the fusion trunk, bypassing the bottleneck. This single addition improved volatility $R^2$ from 0.867 to 0.921.
+
+\subsection{Loss Functions}
+
+\subsubsection{QLIKE Loss for Volatility (Weight: 0.85)}
+
+\begin{equation}
+    \mathcal{L}_{\text{QLIKE}} = \frac{1}{N}\sum_{i=1}^N \left(\frac{\sigma^2_{\text{true},i}}{\hat{\sigma}^2_i} + \log\hat{\sigma}^2_i\right)
+\end{equation}
+
+\textbf{Why QLIKE over MSE?} When $\hat{\sigma} < \sigma_{\text{true}}$ (underprediction), the first term $\sigma^2_{\text{true}}/\hat{\sigma}^2$ explodes. Underpredicting risk is more dangerous than overpredicting it. QLIKE is also scale-invariant.
+
+\begin{lstlisting}[caption={QLIKE loss (src/models/losses.py)}]
+class QLIKELoss(nn.Module):
+    """QLIKE (Quasi-Likelihood) loss for volatility
+    forecasting (Patton, 2011)."""
+    def __init__(self, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, pred, target):
+        valid = ((target > self.eps)
+                 & (pred > self.eps)
+                 & ~torch.isnan(target))
+        if not valid.any():
+            return torch.tensor(0.0, device=pred.device,
+                                requires_grad=True)
+        pred_var = pred[valid].pow(2).clamp(min=self.eps)
+        true_var = target[valid].pow(2).clamp(
+            min=self.eps)
+        qlike = true_var / pred_var + torch.log(pred_var)
+        return qlike.mean()
+\end{lstlisting}
+
+\subsubsection{ListNet Ranking Loss for Direction (Weight: 0.15)}
+
+\begin{equation}
+    \mathcal{L}_{\text{ListNet}} = \frac{1}{|D|}\sum_{d \in D} \text{CE}\!\left(\text{softmax}(\mathbf{y}_d \cdot \tau) \;\big\|\; \text{softmax}(\hat{\mathbf{y}}_d)\right)
+\end{equation}
+
+\textbf{Why ListNet over Cross-Entropy?} Cross-entropy evaluates each stock independently. ListNet groups all 30 stocks on the same trading date and optimizes their \textit{relative ranking}, canceling out market-wide movement (beta) and forcing the model to learn stock-specific signals.
+
+\begin{lstlisting}[caption={ListNet ranking loss (src/models/losses.py)}]
+def listnet_loss(scores, labels, dates,
+                 temperature=5.0):
+    """ListNet ranking loss.
+    Groups stocks by trading date and computes
+    cross-entropy between predicted and true rankings.
+    """
+    pred_probs = F.softmax(scores, dim=1)[:, 1]
+    loss = torch.tensor(0.0, device=scores.device)
+    n_dates = 0
+    for date in dates.unique():
+        mask = dates == date
+        n_stocks = mask.sum()
+        if n_stocks < 2:
+            continue
+        pred = pred_probs[mask]
+        true = labels[mask].float()
+        pred_dist = F.softmax(pred, dim=0)
+        true_dist = F.softmax(true * temperature,
+                              dim=0)
+        ce = -(true_dist
+               * torch.log(pred_dist + 1e-8)).sum()
+        loss = loss + ce
+        n_dates += 1
+    return loss / max(n_dates, 1)
+\end{lstlisting}
+
+\subsubsection{Combined Loss}
+
+\begin{equation}
+    \mathcal{L} = 0.85 \times \mathcal{L}_{\text{QLIKE}} + 0.15 \times \mathcal{L}_{\text{ListNet}}
+\end{equation}
+
+\textbf{Why 0.85/0.15?} Three variants were tested: balanced (0.5/0.5), dir-assisted (0.7/0.3), and vol-primary (0.85/0.15). The balanced variant stopped training at epoch 10 because QLIKE and ListNet gradients pointed in opposing directions. The 0.85/0.15 split gave one objective a dominant voice, allowing the optimizer to converge (training continued to epoch 26).
+
+\subsection{Training Configuration}
+
+\begin{table}[H]
+\centering
+\caption{Hyperparameters for the fusion model}
+\begin{tabular}{lll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} & \textbf{Justification} \\
+\midrule
+Optimizer         & AdamW            & Correct L2 regularization (vs Adam) \\
+Learning rate     & $5 \times 10^{-4}$ & Standard for Adam-family on financial data \\
+Weight decay      & $10^{-3}$        & L2 regularization to prevent overfitting \\
+Batch size        & 2048             & Large batch for stable ListNet gradient \\
+LR Scheduler      & CosineAnnealing  & Smooth decay, avoids sharp LR drops \\
+Max epochs        & 60               & With early stopping \\
+Early stopping    & Patience = 7     & Stops if val loss flat for 7 epochs \\
+Gradient clipping & max\_norm = 1.0  & Prevents gradient explosion \\
+AMP               & fp16             & Halves memory, enables larger batches \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{lstlisting}[caption={Training infrastructure (src/train/common.py)}]
+@dataclass
+class TrainingConfig:
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-4
+    epochs: int = 20
+    batch_size: int = 512
+    patience: int = 5
+    use_amp: bool = True
+    gradient_accumulation_steps: int = 1
+
+def create_optimizer(model, config):
+    return torch.optim.AdamW(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay)
+
+class EarlyStopping:
+    """Stop when monitored metric stops improving."""
+    def __init__(self, patience=5, mode="min",
+                 min_delta=1e-4):
+        self.patience = patience
+        self.mode = mode
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_score = None
+        self.should_stop = False
+
+    def __call__(self, score):
+        if self.best_score is None:
+            self.best_score = score
+            return False
+        improved = (score < self.best_score
+                    - self.min_delta
+                    if self.mode == "min"
+                    else score > self.best_score
+                    + self.min_delta)
+        if improved:
+            self.best_score = score
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.should_stop = True
+        return self.should_stop
+\end{lstlisting}
+
+\subsection{Results}
+
+\subsubsection{Volatility Forecasting Performance}
+
+\begin{table}[H]
+\centering
+\caption{Volatility R\textsuperscript{2} progression across all project phases}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Phase / Model} & \textbf{Vol R\textsuperscript{2}} & \textbf{Dir AUC} \\
+\midrule
+Historical Average (naive baseline) & 0.348 & --- \\
+V1 Fusion (Phase 6)                 & 0.415 & 0.516 \\
+V2 + ListNet (Phase 10)             & 0.335 & 0.599 \\
+QLIKE + 30 Stocks (Phase 12)        & 0.772 & 0.568 \\
+HAR-RV Features (Phase 13)          & 0.867 & 0.585 \\
+\textbf{HAR-RV Skip (Phase 14)}     & \textbf{0.921} & \textbf{0.591} \\
+HAR-RV Benchmark                    & 0.947 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figures/r2_progression.png}
+\caption{Volatility R\textsuperscript{2} improvement across phases. Phase 14 closes 95.7\% of the gap between V2 baseline and the HAR-RV benchmark.}
+\end{figure}
+
+\subsubsection{Learned Gate Weights}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{figures/gate_weights.png}
+\caption{Fusion gate weights in the final model. GAT (41.2\%) is dominant, confirming that cross-stock relationships are the most informative signal once data leakage is removed.}
+\end{figure}
+
+\subsubsection{Backtest Results (Direction Strategy)}
+
+A weekly long-short strategy using the direction head:
+\begin{itemize}[noitemsep]
+    \item \textbf{Setup:} Top-2 long / Bottom-2 short by predicted UP probability, weekly rebalancing
+    \item \textbf{Sharpe at 0bp:} 0.697 \quad \textbf{At 5bp:} 0.620 \quad \textbf{At 10bp:} 0.543
+    \item \textbf{Break-even:} $\approx$20bp --- strategy remains viable at realistic transaction costs
+\end{itemize}
+
+%══════════════════════════════════════════════════════════════════════════════
+\section{Summary \& Next Steps}
+%══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Phase 3 Deliverables Completed}
+\begin{itemize}[noitemsep]
+    \item[$\checkmark$] Chronological train/validation/test split (65.8/10.9/23.3\%)
+    \item[$\checkmark$] Z-score normalization (fit on training set only)
+    \item[$\checkmark$] 21-feature engineering pipeline including HAR-RV autoregressive features
+    \item[$\checkmark$] FinBERT chunking pipeline for 227 SEC filings
+    \item[$\checkmark$] Macroeconomic feature extraction with 1-day lag
+    \item[$\checkmark$] 30-node knowledge graph construction
+    \item[$\checkmark$] Availability masking for missing modalities
+    \item[$\checkmark$] Two data leakage audits and corrections
+\end{itemize}
+
+\subsection{Phase 4 Deliverables Completed}
+\begin{itemize}[noitemsep]
+    \item[$\checkmark$] CNN-BiLSTM price encoder (256-d output)
+    \item[$\checkmark$] Custom GAT in pure PyTorch (256-d output, +2.6\% AUC over ablation)
+    \item[$\checkmark$] Frozen FinBERT with attention pooling (768-d output)
+    \item[$\checkmark$] Macro MLP encoder (32-d output)
+    \item[$\checkmark$] Gated multimodal fusion with availability masking
+    \item[$\checkmark$] HAR-RV skip connection ($R^2$: 0.867 $\to$ 0.921)
+    \item[$\checkmark$] QLIKE loss for volatility + ListNet ranking loss for direction
+    \item[$\checkmark$] AMP fp16 training with gradient clipping
+\end{itemize}
+
+\subsection{Key Lessons Learned}
+\begin{enumerate}
+    \item \textbf{Data integrity is paramount.} Two separate leakages demonstrated how easily an ML pipeline can appear to work when a feature encodes the target. Auditing inputs when results seem too good is essential.
+    \item \textbf{Task choice matters.} Volatility is more predictable than direction on efficient markets. Switching the primary objective from direction to volatility increased $R^2$ from 0.335 to 0.921.
+    \item \textbf{Skip connections preserve information.} The HAR-RV skip connection directly addressed the CNN-BiLSTM compression bottleneck, providing the single largest improvement ($+6.3\%$ $R^2$).
+    \item \textbf{Loss function design is architecture.} QLIKE's asymmetric penalty and scale-invariance, and ListNet's beta-canceling ranking formulation, contributed as much as architectural changes.
+\end{enumerate}
+
+\vspace{1cm}
+\noindent\textbf{GitHub Repository:} \url{https://github.com/imrishi007/financial-document-analysis}

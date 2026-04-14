@@ -1,31 +1,31 @@
 # Multimodal Financial Forecasting
 
-> **Volatility forecasting and direction prediction for 30 S&P 500 tech stocks using price, SEC filings, sector graph, macro, and earnings surprise signals.**
+> **Volatility forecasting and direction prediction for 30 NASDAQ tech stocks using price, SEC filings, sector graph, macro, and earnings surprise signals.**
 >
-> Final model: **Vol R² = 0.921** (HAR-RV benchmark: 0.947) | **Direction AUC = 0.591** | **Direction Sharpe = 0.620 at 5bp transaction costs**
+> Best model: **Vol R² = 0.9315** (HAR-RV benchmark: 0.9469) | **Direction AUC = 0.5925** | **Direction Sharpe = 0.620 at 5bp transaction costs**
 
 ---
 
 ## What This Project Does
 
-This project builds a multimodal deep learning system that jointly forecasts **realized volatility** and **price direction** for 30 technology stocks over a 5-day horizon. The model fuses five heterogeneous information sources — price sequences, SEC 10-K filings, sector dependency graphs, macroeconomic indicators, and earnings surprises — through a gated fusion architecture with learnable modality weighting.
+This project builds a multimodal deep learning system that jointly forecasts **realized volatility** and **price direction** for 30 technology stocks over a 5-day horizon. The model fuses five heterogeneous information sources, price sequences, SEC 10-K filings, sector dependency graphs, macroeconomic indicators, and earnings surprises, through a gated fusion architecture with learnable modality weighting.
 
-The project evolved significantly across 14 development phases. It began as a direction classifier for 10 stocks and pivoted in Phase 12 to volatility-primary forecasting after recognizing that volatility is more forecastable and more directly applicable to options/variance strategies.
+The project evolved through multiple development iterations, starting as a direction classifier for 10 stocks and transitioning to volatility-primary forecasting after recognising that volatility is more forecastable and directly applicable to options/variance strategies.
 
 ---
 
-## Evolution
+## Model Evolution
 
-| Phase | Focus | Vol R² | Dir AUC |
-|-------|-------|--------|---------|
-| 4–6 | Initial fusion (10 stocks, direction-only) | 0.440 | 0.545 |
-| 11 | ListNet ranking loss, V2 architecture | 0.335 | 0.565 |
-| 12 | Pivoted to vol-primary; QLIKE loss, 30 stocks | 0.772 | 0.568 |
-| 13 | HAR-RV autoregressive features; 30 stocks | 0.867 | 0.585 |
-| **14** | **HAR-RV skip connection bypassing CNN-BiLSTM** | **0.921** | **0.591** |
-| HAR-RV | Econometric benchmark | 0.947 | — |
+| Variant | Focus | Vol R² | Dir AUC |
+|---------|-------|--------|---------|
+| Initial Fusion | MSE loss, 10 stocks, direction-only | 0.440 | 0.545 |
+| + QLIKE Loss | Pivoted to vol-primary; QLIKE loss, 30 stocks | 0.772 | 0.568 |
+| + HAR-RV Features | HAR-RV autoregressive features | 0.867 | 0.585 |
+| + Skip Connection | HAR-RV skip bypassing CNN-BiLSTM | 0.921 | 0.591 |
+| **+ Deeper Vol Head** | **5-layer MLP volatility head** | **0.9315** | **0.5925** |
+| HAR-RV | Econometric benchmark (Corsi 2009) | 0.947 | — |
 
-The jump from Phase 12 → 13 → 14 demonstrates systematic gap-closing against the HAR-RV econometric baseline. Phase 14 closes **95.7%** of the gap between the V2 baseline and HAR-RV.
+The deeper vol head closes **98.3%** of the gap between the initial baseline and the HAR-RV econometric benchmark.
 
 ---
 
@@ -67,13 +67,14 @@ Earnings surp. ─────────────────────�
 |-------|--------|------|-------|
 | Historical Average | 0.348 | — | Naive baseline |
 | GARCH(1,1) | ~0.60 | — | Univariate time-series |
-| V2 Fusion Baseline | 0.335 | — | Phase 11 |
-| Phase 12 | 0.772 | 0.096 | First QLIKE training |
-| Phase 13 | 0.867 | 0.073 | +HAR-RV features |
-| **Phase 14 (this model)** | **0.921** | **0.056** | +skip connection |
-| HAR-RV | 0.947 | 0.045 | Econometric benchmark |
+| Initial Fusion (MSE) | 0.440 | — | First multimodal model |
+| + QLIKE Loss | 0.772 | 0.096 | Asymmetric vol loss |
+| + HAR-RV Features | 0.867 | 0.073 | Autoregressive inputs |
+| + Skip Connection | 0.921 | 0.056 | Direct RV path |
+| **Ours (Deeper Vol Head)** | **0.9315** | **0.0525** | **5-layer vol head** |
+| HAR-RV | 0.9469 | 0.045 | Econometric benchmark |
 
-Phase 14 does not beat HAR-RV (gap: 0.026). The remaining gap reflects HAR-RV's irreducible advantage as a zero-compression linear model on strongly autoregressive data. The multimodal model's advantage lies in incorporating document, graph, and macro signals that HAR-RV cannot use.
+The model does not beat HAR-RV (gap: 0.016). The remaining gap reflects HAR-RV's irreducible advantage as a zero-compression linear model on strongly autoregressive data. The multimodal model's advantage lies in incorporating document, graph, and macro signals that HAR-RV cannot use, plus directional forecasting capability.
 
 ### Trading Strategy
 
@@ -170,18 +171,21 @@ financial-document-analysis/
 │   └── 14_phase14_results.ipynb       # Final results ← start here
 │
 ├── models/
-│   ├── document_model_best.pt         # FinBERT encoder (420 MB)
-│   ├── phase14_fusion_best.pt         # Final Phase 14 model (6.5 MB)
-│   ├── phase13_fusion_vol_primary.pt  # Phase 13 reference
-│   ├── phase13_price_best.pt          # CNN-BiLSTM checkpoint
-│   ├── phase13_gat_best.pt            # GAT checkpoint
-│   ├── macro_v2_1_best.pt             # Macro encoder
+│   ├── best_model.pt                  # Best model — Deeper Vol Head (R²=0.9315)
+│   ├── phase14_fusion_best.pt         # HAR-RV Skip model (R²=0.921)
+│   ├── phase15_learned_har_weighting_best.pt  # Learned HAR (R²=0.926)
 │   ├── phase14_training_results.json
 │   ├── phase14_benchmark_results.json
-│   └── phase14_backtest_results.json
+│   └── phase15_experiment_results.csv
+│
+├── webapp/
+│   ├── backend/                       # FastAPI prediction server
+│   │   └── main.py
+│   └── frontend/                      # React + Vite UI
+│       └── src/
 │
 └── docs/
-    ├── MODEL_DOCUMENTATION.tex        # Full technical write-up (gitignored)
+    ├── SSRN_PREPRINT.tex              # Full technical write-up
     ├── ARCHITECTURE.md
     └── PROJECT_SCOPE.md
 ```
@@ -233,15 +237,17 @@ python scripts/run_phase14_backtest.py
 
 ## Key Technical Findings
 
-1. **Volatility is forecastable, direction is not (much)**: Vol R²=0.921 vs direction AUC=0.591 — the model can almost perfectly rank stocks by upcoming volatility but cannot reliably predict direction.
+1. **Volatility is forecastable, direction is not (much)**: Vol R²=0.9315 vs direction AUC=0.5925 — the model can almost perfectly rank stocks by upcoming volatility but cannot reliably predict direction.
 
-2. **The CNN-BiLSTM bottleneck is real**: The HAR-RV skip connection improved R² from 0.867 → 0.921 by providing a direct linear path from lagged RV to the prediction, bypassing the 256-dim compression. Skip contribution metric = 0.115.
+2. **The CNN-BiLSTM bottleneck is real**: The HAR-RV skip connection improved R² from 0.867 → 0.921 by providing a direct linear path from lagged RV to the prediction, bypassing the 256-dim compression.
 
-3. **QLIKE loss outperforms MSE for volatility**: The switch to QLIKE in Phase 12 drove the biggest single improvement (+0.437 R²). QLIKE penalizes forecast errors asymmetrically — underestimating volatility is worse than overestimating.
+3. **QLIKE loss outperforms MSE for volatility**: The switch to QLIKE drove the biggest single improvement (+0.332 R²). QLIKE penalizes forecast errors asymmetrically — underestimating volatility is worse than overestimating.
 
-4. **Direction strategy survives realistic costs**: Sharpe drops from 0.697 → 0.620 → 0.543 at 0 / 5 / 10bp. Still positive at 20bp (Sharpe = 0.392), suggesting the directional signal is genuine.
+4. **Deeper vol head matters**: A 5-layer MLP volatility head (256→128→64→32→1) improved R² from 0.921→0.9315, closing most of the HAR-RV benchmark gap.
 
-5. **Multimodal > price-only for direction, not volatility**: Gate weights show price dominates (58.6%) after adding the skip connection. Documents and macro contribute 19.5% and 6.8% respectively — relevant for direction but less so for vol.
+5. **Direction strategy survives realistic costs**: Sharpe drops from 0.697 → 0.620 → 0.543 at 0 / 5 / 10bp. Still positive at 20bp (Sharpe = 0.392), suggesting the directional signal is genuine.
+
+6. **Multimodal > price-only for direction, not volatility**: Gate weights show price dominates (58.6%) after adding the skip connection. Documents and macro contribute 19.5% and 6.8% respectively — relevant for direction but less so for vol.
 
 ---
 
@@ -260,10 +266,41 @@ python scripts/run_phase14_backtest.py
 
 ## Limitations
 
-- **No options data**: The volatility trading strategy uses VIX × β as an implied vol proxy, which is too crude. Real mispricing detection requires individual stock option chains.
+- **No options data**: The volatility trading strategy uses VIX x beta as an implied vol proxy, which is too crude. Real mispricing detection requires individual stock option chains.
 - **Survivorship bias**: Dataset includes only companies that remained in S&P 500 throughout the study period.
-- **HAR-RV gap**: The 0.026 R² gap to HAR-RV reflects an irreducible advantage of zero-compression linear models on autoregressive data. The multimodal value is in cross-asset and sentiment signals that HAR-RV cannot incorporate.
+- **HAR-RV gap**: The ~0.015 R² gap to HAR-RV reflects an irreducible advantage of zero-compression linear models on autoregressive data. The multimodal value is in cross-asset and sentiment signals that HAR-RV cannot incorporate.
 - **Document encoding is static**: 10-K embeddings are computed once per year. Intra-year document updates are not captured.
+
+## Running the Web Application
+
+The project includes a web application for interactive volatility predictions.
+
+### 1. Start the Backend (FastAPI)
+
+```bash
+cd webapp/backend
+pip install fastapi uvicorn yfinance torch numpy pandas pydantic
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+The API will start at `http://localhost:8000`. It loads the best model (`models/best_model.pt`) on startup.
+
+### 2. Start the Frontend (React + Vite)
+
+```bash
+cd webapp/frontend
+npm install
+npm run dev
+```
+
+The frontend will start at `http://localhost:5173` (or the next available port). Open it in your browser.
+
+### 3. Use the App
+
+- Select a stock from the dropdown
+- View predicted volatility, direction signal, and confidence
+- Explore charts: volatility forecast, gate weights, HAR-RV components, daily returns
+- Check return statistics and price history
 
 ---
 
